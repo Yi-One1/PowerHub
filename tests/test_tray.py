@@ -479,3 +479,65 @@ def test_percent_font_leaves_breathing_room():
 
     assert 9.8 <= PERCENT_FONT <= 10.9, "两位数字号超出『清楚不挤』的区间"
     assert PERCENT_FONT - PERCENT_FONT_COMPACT >= 1.5, "三位数要明显小于两位数，否则会顶到徽标边缘"
+
+
+# --------------------------------------------------------------------------- #
+# 充电态：底色保持设备色，闪电在任何背景下都要看得清
+# --------------------------------------------------------------------------- #
+def _pixel_counts(color: str, *, level=None, charging=True, show_percent=True, canvas: int = 64):
+    """返回 (白像素数, 深像素数, 徽标左侧内边像素)。"""
+    from app.ui.tray import battery_icon
+
+    image = battery_icon(level, color, charging, show_percent, False).pixmap(canvas, canvas).toImage()
+    whites = darks = 0
+    for y in range(canvas):
+        for x in range(canvas):
+            c = image.pixelColor(x, y)
+            if c.alpha() < 140:
+                continue
+            if c.red() > 200 and c.green() > 200 and c.blue() > 200:
+                whites += 1
+            elif c.red() < 100 and c.green() < 100 and c.blue() < 100:
+                darks += 1
+    # x=8/64 落在徽标内部左缘、闪电左侧，是纯底色
+    edge = image.pixelColor(8, 32)
+    return whites, darks, edge
+
+
+def test_unreadable_charging_keeps_device_color(qapp):
+    """读不到电量但充电时，底色仍是设备原色 —— 不再整块转绿。"""
+    for color in ("#0A84FF", "#2FC48A", "#FFE066", "#F24242"):
+        _, _, edge = _pixel_counts(color)
+        assert edge.name() == color.lower(), f"{color} 的徽标底色被改成了 {edge.name()}"
+
+
+def test_unreadable_charging_bolt_flips_with_background(qapp):
+    """闪电按底色反色：深底白闪电、浅底深闪电。"""
+    dark_whites, _, _ = _pixel_counts("#0A84FF")
+    _, light_darks, _ = _pixel_counts("#FFE066")
+
+    assert dark_whites > 150, "深色底上应是白色闪电"
+    assert light_darks > 150, "浅色底上应是深色闪电"
+
+
+def test_bolt_outline_shows_on_mid_luminance(qapp):
+    """中间调底色（中灰）下，闪电除主体外还要有反色描边，否则轮廓会糊掉。
+
+    灰底 (#808080) 亮度 < 0.5 → 白闪电。若不画描边，深色像素应为 0。
+    """
+    whites, darks, _ = _pixel_counts("#808080")
+
+    assert whites > 120, "灰底上应有白色闪电主体"
+    assert darks > 50, "灰底上应有深色描边把闪电轮廓分开"
+
+
+def test_shell_mode_bolt_also_contrasts(qapp):
+    """电池外壳模式（关闭显示百分比）的充电闪电同样要能看清。"""
+    _, light_darks, _ = _pixel_counts("#FFE066", level=60, show_percent=False)
+    whites, _, _ = _pixel_counts("#0A84FF", level=60, show_percent=False)
+
+    assert light_darks > 30, "浅色外壳上应有深色闪电"
+    assert whites > 30, "深色外壳上应有白色闪电"
+
+
+# --------------------------------------------------------------------------- #

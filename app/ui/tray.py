@@ -44,6 +44,10 @@ BADGE_RADIUS = 4.6
 PERCENT_FONT = 10.6          # 两位数：再大两侧就贴到圆角块边缘，看着挤
 PERCENT_FONT_COMPACT = 8.4   # 三位数（100）收字号，否则会顶到徽标边缘
 CHARGE_DOT_RADIUS = 2.4
+# 「读不到电量 + 充电」时正中那枚闪电的边长（16px 画布下的取值）
+CHARGE_BOLT_SIZE = 9.6
+# 电池外壳模式里闪电的边长
+SHELL_BOLT_SIZE = 6.4
 
 
 def relative_luminance(color: QColor) -> float:
@@ -96,6 +100,36 @@ def _draw_charge_dot(painter: QPainter, scale: float) -> None:
     painter.drawPath(_bolt(QPointF(center, center), radius * 1.9))
 
 
+def _draw_bolt_contrast(
+    painter: QPainter,
+    center: QPointF,
+    size: float,
+    background: QColor,
+    *,
+    scale: float = 1.0,
+) -> None:
+    """画一枚「任何背景下都看得清」的闪电。
+
+    主体按底色反色（深底白闪电、浅底深闪电），外面再描一圈**反向**细边：
+    白闪电配深描边、深闪电配浅描边。这样即使底色亮度正好在阈值附近、
+    或闪电落在半透明外壳/任务栏上，轮廓也不会糊掉。
+    """
+    fg = foreground_on(background)
+    # 与主体相反的极端色 —— 主体够亮就描深色边，主体够暗就描浅色边
+    edge = QColor(0, 0, 0, 190) if relative_luminance(fg) > 0.5 else QColor(255, 255, 255, 190)
+    path = _bolt(center, size)
+    pen = QPen(edge, max(0.5, 0.62 * scale))
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(pen)
+    painter.drawPath(path)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(fg)
+    painter.drawPath(path)
+
+
+
 def _draw_icon(painter: QPainter, size: int, level: Optional[int], color: str, charging: bool, show_percent: bool, offline: bool) -> None:
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     # 电量告急时整枚图标转红，16px 下靠颜色比靠像素更容易被注意到
@@ -122,13 +156,18 @@ def _draw_icon(painter: QPainter, size: int, level: Optional[int], color: str, c
         return
 
     if show_percent and charging:
-        # 充电占位符（电量不可读）：整块绿色 + 闪电，与主界面"充电中"一致
-        solid = QColor(theme.OK)
+        # 充电但电量读不出来：底色仍是设备原色（不再整块绿），正中一枚高对比闪电。
+        # 闪电本身就是「正在充电」的信号，不再额外叠右下角标。
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(solid)
+        painter.setBrush(base)
         painter.drawRoundedRect(badge, badge_radius, badge_radius)
-        painter.setBrush(foreground_on(solid))
-        painter.drawPath(_bolt(QPointF(8.0 * scale, 8.2 * scale), 9.4 * scale))
+        _draw_bolt_contrast(
+            painter,
+            QPointF(8.0 * scale, 8.0 * scale),
+            CHARGE_BOLT_SIZE * scale,
+            base,
+            scale=scale,
+        )
         return
 
     # 电量未知且未充电 / 未开启数字模式：回落到电池外壳画法
@@ -166,11 +205,15 @@ def _draw_icon(painter: QPainter, size: int, level: Optional[int], color: str, c
     painter.drawRoundedRect(body, radius, radius)
 
     if charging:
-        painter.setPen(Qt.PenStyle.NoPen)
-        bolt = QColor(foreground_on(base))
-        bolt.setAlpha(235)
-        painter.setBrush(bolt)
-        painter.drawPath(_bolt(QPointF(body.center().x(), body.center().y()), 6.4 * scale))
+        # 外壳只是 22~28% 透明度的底色，白闪电落在浅色任务栏上会消失，
+        # 所以这里也用带描边的高对比闪电
+        _draw_bolt_contrast(
+            painter,
+            QPointF(body.center().x(), body.center().y()),
+            SHELL_BOLT_SIZE * scale,
+            base,
+            scale=scale,
+        )
 
 
 def battery_icon(

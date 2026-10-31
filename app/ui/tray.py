@@ -41,8 +41,8 @@ FG_DARK = QColor(theme.TEXT_PRIMARY)
 # 旧版数字只有 9.4px 且四周留白大，缩到任务栏里就糊成一团。
 BADGE_INSET = 0.5
 BADGE_RADIUS = 4.6
-PERCENT_FONT = 11.6          # 两位数
-PERCENT_FONT_COMPACT = 9.0   # 三位数（100）收字号，否则会顶到徽标边缘
+PERCENT_FONT = 10.6          # 两位数：再大两侧就贴到圆角块边缘，看着挤
+PERCENT_FONT_COMPACT = 8.4   # 三位数（100）收字号，否则会顶到徽标边缘
 CHARGE_DOT_RADIUS = 2.4
 
 

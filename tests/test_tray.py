@@ -468,3 +468,14 @@ def test_badge_almost_fills_canvas(qapp):
     assert image.pixelColor(edge, 32).alpha() > 200, "左侧边缘应有底色"
     assert image.pixelColor(64 - edge, 32).alpha() > 200, "右侧边缘应有底色"
     assert image.pixelColor(0, 0).alpha() == 0, "画布四角应留白"
+
+def test_percent_font_leaves_breathing_room():
+    """数字字号护栏：11.6px 时 100% 只剩 3px 留白，视觉上贴边发挤，已回落到 10.6。
+
+    这里锁的是字号的取值区间，而不是像素留白 —— 像素会随字体回退变化，
+    字号常量才是这轮调整的真正意图：既清楚，也不挤。
+    """
+    from app.ui.tray import PERCENT_FONT, PERCENT_FONT_COMPACT
+
+    assert 9.8 <= PERCENT_FONT <= 10.9, "两位数字号超出『清楚不挤』的区间"
+    assert PERCENT_FONT - PERCENT_FONT_COMPACT >= 1.5, "三位数要明显小于两位数，否则会顶到徽标边缘"

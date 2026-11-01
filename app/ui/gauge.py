@@ -10,10 +10,16 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 from . import glass, theme
 
 STYLE_HEIGHT = {"ring": 84, "bar": 44, "number": 58}
-# 图形元素的可读下限：低于 3:1 基本看不出轮廓（WCAG 对非文本图形的建议值）
 GAUGE_MIN_CONTRAST = 3.0
 # 渐变亮端的提亮幅度上限；底色越亮，实际提亮越少（见 _bright_end）
 GRADIENT_LIGHTEN = 0.42
+# 环境阴影：设备色与底色对比不足时，在图形底下垫几层半透明深色，把轮廓"托"出来。
+# 这是不改颜色、也不动卡片底色的前提下让浅色可见的唯一办法。
+# 每项是 (比笔触额外加宽的像素, 黑色不透明度)：由外到内逐层加深，叠出柔边。
+SHADOW_LAYERS = ((7.0, 11), (4.5, 16), (2.2, 22))
+# 对比低于 3:1 才开始加阴影；低于 1:1 给满强度
+SHADOW_START_CONTRAST = 3.0
+SHADOW_FULL_CONTRAST = 1.0
 
 
 def _bolt_path(center: QPointF, size: float) -> QPainterPath:
@@ -127,6 +133,41 @@ class BatteryGauge(QWidget):
         ratio = GRADIENT_LIGHTEN * max(0.0, min(1.0, room))
         return theme.lighten(base.name(), ratio)
 
+    def _shadow_strength(self, face: QColor) -> float:
+        """需要多强的环境阴影（0 = 不用，1 = 满强度）。
+
+        由设备色与底色的对比缺口决定：纯白几乎看不见 → 满强度，
+        浅黄浅绿本来能看出形 → 只给轻档，够清楚的颜色 → 完全不加。
+        """
+        if self._charging_placeholder:
+            return 0.0
+        ratio = theme.contrast_ratio(self._color, face)
+        if ratio >= SHADOW_START_CONTRAST:
+            return 0.0
+        span = max(1e-6, SHADOW_START_CONTRAST - SHADOW_FULL_CONTRAST)
+        return max(0.0, min(1.0, (SHADOW_START_CONTRAST - ratio) / span))
+
+    def _stroke_shadow(self, painter: QPainter, path: QPainterPath, strength: float) -> None:
+        """沿 path 由外向内地描几层半透明黑，形成一圈柔和阴影。"""
+        if strength <= 0.0:
+            return
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for extra, alpha in SHADOW_LAYERS:
+            pen = QPen(QColor(0, 0, 0, int(round(alpha * strength))), extra)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.strokePath(path, pen)
+
+    def _arc_shadow(self, painter: QPainter, arc_rect: QRectF, thickness: float, ratio: float, strength: float) -> None:
+        """环形的阴影：与环同一条弧，只是更粗、半透明。"""
+        if strength <= 0.0:
+            return
+        for extra, alpha in SHADOW_LAYERS:
+            pen = QPen(QColor(0, 0, 0, int(round(alpha * strength))), thickness + extra)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(arc_rect, 90 * 16, int(-360 * 16 * ratio))
+
     @property
     def _dim(self) -> bool:
         return not self._online or (self._level is None and not self._charging)
@@ -165,6 +206,8 @@ class BatteryGauge(QWidget):
         painter.drawEllipse(arc_rect)
 
         if ratio > 0:
+            # 浅色设备色在浅底上没有轮廓，先垫一圈柔和阴影把它托出来（颜色本身不动）
+            self._arc_shadow(painter, arc_rect, thickness, ratio, self._shadow_strength(face))
             gradient = QConicalGradient(arc_rect.center(), 90)
             base = color
             gradient.setColorAt(0.0, base)
@@ -212,6 +255,15 @@ class BatteryGauge(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(track)
         painter.drawRoundedRect(bar, radius, radius)
+
+        strength = self._shadow_strength(face)
+        if strength > 0.0 and not self._charging_placeholder:
+            fill_width = max(bar_height, bar.width() * (0.0 if self._level is None else max(0.0, min(1.0, self._level / 100.0))))
+            shadow_path = QPainterPath()
+            shadow_path.addRoundedRect(
+                QRectF(bar.left(), bar.top(), fill_width, bar.height()), radius, radius
+            )
+            self._stroke_shadow(painter, shadow_path, strength)
 
         if self._charging_placeholder:
             fill = bar

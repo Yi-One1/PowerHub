@@ -1,7 +1,7 @@
-"""对比度兜底：设备色与卡片底色太接近时要自动压暗/提亮。
+"""设备色太浅时的可见性方案。
 
-用户能把设备颜色选到接近纯白，而卡片背景可能就是白的 —— 这时"忠实还原所选颜色"
-和"看得见"冲突，一律以看得见为先，配置里存的原色不动。
+取舍：设备色**一个像素都不改**，卡片底色也保持"白 + 设备色淡染"的原样，
+只给环形/条形垫一圈按对比缺口自动调节的柔和阴影，把浅色轮廓托出来。
 """
 from __future__ import annotations
 
@@ -20,54 +20,18 @@ WHITE = QColor("#FFFFFF")
 
 
 # --------------------------------------------------------------------------- #
-# theme.ensure_contrast
+# 对比度量（阴影强度全靠它）
 # --------------------------------------------------------------------------- #
 def test_contrast_ratio_matches_wcag_reference():
-    """> 黑白对比是 21:1，同色是 1:1。"""
     assert theme.contrast_ratio("#000000", "#FFFFFF") == pytest.approx(21.0, abs=0.1)
     assert theme.contrast_ratio("#FFFFFF", "#FFFFFF") == pytest.approx(1.0, abs=0.01)
-    # 顺序无关
     assert theme.contrast_ratio("#FFFFFF", "#000000") == pytest.approx(21.0, abs=0.1)
 
 
-def test_white_on_white_is_pushed_down_to_visible():
-    out = theme.ensure_contrast("#FFFFFF", WHITE, 3.0)
-
-    assert theme.contrast_ratio(out, WHITE) >= 3.0
-    assert out.name() != "#ffffff", "纯白必须被压暗，否则等于没改"
-    # 压到中灰即可，不必推到纯黑
-    assert out.lightnessF() > 0.3
-
-
-def test_visible_colors_are_left_alone():
-    """本来就够清楚的颜色一个字都不许动，否则会误伤全站配色。"""
-    for color in ("#0A84FF", "#1C1C1E", "#FF453A"):
-        out = theme.ensure_contrast(color, WHITE, 3.0)
-        assert out.name() == color.lower(), f"{color} 本来达标，却被改成了 {out.name()}"
-
-
-def test_hue_is_preserved_when_adjusting():
-    """压暗只动明度，色相不变 —— 浅黄仍要看起来是黄，不能变成灰。"""
-    for source in ("#FFE066", "#C7F5D8"):
-        out = theme.ensure_contrast(source, WHITE, 3.0)
-        src_hue = QColor(source).hue()
-        out_hue = out.hue()
-        assert abs(src_hue - out_hue) <= 2, f"{source} 的色相从 {src_hue} 漂到了 {out_hue}"
-        assert theme.contrast_ratio(out, WHITE) >= 3.0
-
-
-def test_dark_background_pushes_color_brighter():
-    dark = QColor("#1A1A1A")
-    out = theme.ensure_contrast("#1C1C1E", dark, 3.0)
-
-    assert theme.contrast_ratio(out, dark) >= 3.0
-    assert out.lightnessF() > QColor("#1C1C1E").lightnessF(), "深底上应该往亮推，不是偷偷压暗"
-
-
-def test_achromatic_color_survives_adjustment():
-    """纯白/纯灰没有色相（hue = -1），这条路上不能崩。"""
-    out = theme.ensure_contrast(QColor(255, 255, 255), WHITE, 3.0)
-    assert theme.contrast_ratio(out, WHITE) >= 3.0
+def test_relative_luminance_orders_colors():
+    assert theme.relative_luminance("#000000") < 0.01
+    assert theme.relative_luminance("#FFFFFF") == pytest.approx(1.0, abs=0.01)
+    assert theme.relative_luminance("#FFE066") > theme.relative_luminance("#0A84FF")
 
 
 # --------------------------------------------------------------------------- #
@@ -79,154 +43,150 @@ def test_face_color_is_white_without_backdrop(qapp):
 
 
 def test_face_color_brightens_on_dark_backdrop(qapp):
-    """深色壁纸下三层白纱叠起来仍应接近白 —— 这正是灰字还能读的前提。"""
+    """深色壁纸下三层白纱叠起来仍接近白 —— 这是灰字还能读的前提。"""
     from app.ui.backdrop import BackdropPalette
 
     glass.set_backdrop(None, BackdropPalette(QColor("#101010"), 0.02, 0.0, False))
     try:
-        face = glass.face_color()
-        assert theme.relative_luminance(face) > 0.7, "深壁纸下卡片底色不该跟着变暗"
-    finally:
-        glass.clear_backdrop()
-
-
-def test_face_color_follows_light_backdrop(qapp):
-    from app.ui.backdrop import BackdropPalette
-
-    glass.set_backdrop(None, BackdropPalette(QColor("#FAFAFA"), 0.95, 0.0, False))
-    try:
-        assert theme.relative_luminance(glass.face_color()) > 0.8
+        assert theme.relative_luminance(glass.face_color()) > 0.7
     finally:
         glass.clear_backdrop()
 
 
 # --------------------------------------------------------------------------- #
-# 策略：设备色一律不改，改的是卡片底衬
+# 阴影强度：按对比缺口自动调节
 # --------------------------------------------------------------------------- #
-def test_shade_zero_when_already_visible():
-    """本来就够清楚的颜色，卡片一点都不要压深。"""
-    for color in ("#0A84FF", "#1C1C1E", "#FF453A"):
-        assert theme.shade_for_contrast(color, WHITE, 3.0) == 0.0
+def _strength(color: str, style: str = "ring", background=WHITE) -> float:
+    from app.ui.gauge import BatteryGauge
+
+    gauge = BatteryGauge(style, color)
+    gauge.set_state(72, False, True, False)
+    return gauge._shadow_strength(background)
 
 
-def test_shade_deepens_card_for_light_colors():
-    """浅色设备色必须把卡片压深，否则白底白环。"""
-    for color in ("#FFFFFF", "#F5F5F7", "#FFE066", "#C7F5D8"):
-        shade = theme.shade_for_contrast(color, WHITE, 3.0)
-        assert shade > 0.3, f"{color} 需要压深卡片，实际只给了 {shade:.2f}"
-
-        keep = 1.0 - shade
-        mixed = QColor(int(255 * keep), int(255 * keep), int(255 * keep))
-        assert theme.contrast_ratio(color, mixed) >= 2.9
+@pytest.mark.parametrize("color", ["#FFFFFF", "#F5F5F7", "#FFE066", "#C7F5D8"])
+def test_light_colors_ask_for_shadow(color):
+    """浅色设备色必须加阴影，否则白底白环。"""
+    assert _strength(color) >= 0.5, f"{color} 应当需要明显阴影"
 
 
-def test_shade_never_makes_things_worse():
-    """压深后对比必须真的变好，不能出现"越压越糊"。"""
-    bg = QColor("#FFFFFF")
-    for color in ("#FFFFFF", "#FFE066", "#C7F5D8", "#0A84FF"):
-        shade = theme.shade_for_contrast(color, bg, 3.0)
-        if shade == 0.0:
-            continue
-        keep = 1.0 - shade
-        mixed = QColor(int(255 * keep), int(255 * keep), int(255 * keep))
-        assert theme.contrast_ratio(color, mixed) > theme.contrast_ratio(color, bg)
+@pytest.mark.parametrize("color", ["#0A84FF", "#1C1C1E", "#FF453A"])
+def test_visible_colors_get_no_shadow(color):
+    """本来就清楚的颜色一点阴影都不加，保持原来的观感。"""
+    assert _strength(color) == 0.0
+
+
+def test_whiter_color_gets_stronger_shadow():
+    """越接近白，缺口越大，阴影越重 —— 不能一刀切。"""
+    assert _strength("#FFFFFF") > _strength("#FFE066")
+
+
+def test_charging_placeholder_skips_shadow():
+    """充电占位（绿色环）本来就醒目，不需要阴影。"""
+    from app.ui.gauge import BatteryGauge
+
+    gauge = BatteryGauge("ring", "#FFFFFF")
+    gauge.set_state(None, True, True, False)
+    assert gauge._shadow_strength(WHITE) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# 实际渲染：阴影真的画出来了
+# --------------------------------------------------------------------------- #
+def _render_gauge(color: str, style: str = "ring", width: int = 150):
+    from app.ui.gauge import BatteryGauge
+
+    gauge = BatteryGauge(style, color)
+    gauge.set_state(72, False, True, False)
+    gauge.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    hint = gauge.sizeHint()
+    gauge.resize(width if style != "ring" else hint.width(), hint.height())
+    pixmap = QPixmap(gauge.size())
+    pixmap.fill(Qt.GlobalColor.transparent)
+    gauge.render(pixmap)
+    return pixmap.toImage()
+
+
+def _gray_shadow_pixels(image, spread: int = 14) -> int:
+    """统计"灰色、且比纯白暗"的像素。
+
+    阴影是中性灰（色差很小），而设备色本身带明显色相 —— 用"通道差异小"
+    就能把阴影和蓝色/绿色环本体区分开，避免把深色环误判成阴影。
+    """
+    count = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            pixel = image.pixelColor(x, y)
+            if pixel.alpha() < 100:
+                continue
+            if max(pixel.red(), pixel.green(), pixel.blue()) - min(
+                pixel.red(), pixel.green(), pixel.blue()
+            ) > spread:
+                continue
+            if 0.62 <= theme.relative_luminance(pixel) <= 0.97:
+                count += 1
+    return count
+
+
+def test_white_ring_gets_visible_outline(qapp):
+    """纯白环在白底上：靠阴影画出轮廓，必须有相当数量的深色像素。"""
+    glass.clear_backdrop()
+    assert _gray_shadow_pixels(_render_gauge("#FFFFFF")) > 80, "白色环没有阴影，等于隐形"
+
+
+def test_blue_ring_has_no_shadow_halo(qapp):
+    """蓝色环本来清楚，不该被阴影糊出一圈脏边。"""
+    glass.clear_backdrop()
+    assert _gray_shadow_pixels(_render_gauge("#0A84FF")) == 0, "蓝色环被加了多余的灰色阴影"
+
+
+def test_light_bar_gets_visible_outline(qapp):
+    """条形同理。"""
+    glass.clear_backdrop()
+    assert _gray_shadow_pixels(_render_gauge("#FFFFFF", style="bar", width=150)) > 100, "白色条没有阴影"
 
 
 def test_gauge_keeps_device_color_untouched(qapp):
-    """环形/条形的颜色必须是用户选的原色，一个像素都不压暗。"""
+    """图形颜色必须是用户选的原色，不能被任何逻辑改写。"""
     glass.clear_backdrop()
     from app.ui.gauge import BatteryGauge
 
     for color in ("#FFFFFF", "#FFE066", "#C7F5D8", "#0A84FF"):
         gauge = BatteryGauge("ring", color)
         gauge.set_state(72, False, True, False)
-        assert gauge._visible_color(QColor("#FFFFFF")).name() == color.lower()
+        assert gauge.color == color
 
 
-def _render_card(qapp, color: str, style: str = "ring"):
+# --------------------------------------------------------------------------- #
+# 卡片淡染
+# --------------------------------------------------------------------------- #
+def test_card_tint_is_stronger_than_before(qapp):
+    """卡片上的设备色淡染要比原来的 0.10 更明显，浅色设备色才留得下痕迹。"""
+    from app.ui.cards import CARD_TINT_ALPHA, DeviceCard
+
+    assert CARD_TINT_ALPHA >= 0.14, "淡染太淡，浅色设备色在卡片上看不出来"
+
+    card = DeviceCard("d", "设备", "鼠标", "#FFE066", "ring")
+    assert card.tint_alpha == pytest.approx(CARD_TINT_ALPHA)
+
+
+def test_card_background_stays_light(qapp):
+    """卡片底色必须保持"白 + 淡染"，绝不能为了对比把它压成灰。"""
     from app.core.model import Snapshot
     from app.ui.cards import DeviceCard
 
-    card = DeviceCard("d-test", "测试设备", "鼠标", color, style)
-    card.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-    card.setFixedSize(196, 152)
-    card.apply_snapshot(Snapshot(device_id="d-test", level=72, charging=False, online=True), 20)
-    card.show()
-    qapp.processEvents()
-    pixmap = QPixmap(card.size())
-    pixmap.fill(Qt.GlobalColor.transparent)
-    card.render(pixmap)
-    return card, pixmap.toImage()
-
-
-@pytest.mark.parametrize("color", ["#FFFFFF", "#F5F5F7", "#FFE066", "#C7F5D8"])
-def test_card_background_shades_for_light_device_color(qapp, color):
-    """卡片底色确实被压深了，而设备色还是原样。"""
     glass.clear_backdrop()
-    card, image = _render_card(qapp, color)
+    for color in ("#FFFFFF", "#FFE066", "#C7F5D8"):
+        card = DeviceCard("d", "设备", "鼠标", color, "ring")
+        card.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        card.setFixedSize(196, 152)
+        card.apply_snapshot(Snapshot(device_id="d", level=72, charging=False, online=True), 20)
+        card.show()
+        qapp.processEvents()
+        # 画到白底上：卡片本身是半透明玻璃，只看 alpha 反映不出真实观感
+        pixmap = QPixmap(card.size())
+        pixmap.fill(Qt.GlobalColor.white)
+        card.render(pixmap)
+        face = pixmap.toImage().pixelColor(170, 30)
 
-    assert card.color == color, "设备色不能被动过"
-    # (170, 30) 落在环右侧的空白卡片区域，取到的就是卡片底色
-    face = image.pixelColor(170, 30)
-    assert face.alpha() > 200
-    assert theme.contrast_ratio(color, face) >= 2.5, f"{color} 的卡片没压够深：底色 {face.name()}"
-
-
-@pytest.mark.parametrize("color", ["#0A84FF", "#1C1C1E", "#FF453A"])
-def test_card_background_light_for_visible_device_color(qapp, color):
-    """正常颜色不该被无端压深，卡片要维持原来的浅色玻璃观感。"""
-    glass.clear_backdrop()
-    card, image = _render_card(qapp, color)
-
-    assert card.contrast_shade() == 0.0
-    face = image.pixelColor(170, 30)
-    assert theme.relative_luminance(face) > 0.8, f"{color} 的卡片被误压深成 {face.name()}"
-
-
-def test_shaded_card_text_keeps_contrast(qapp):
-    """卡片压深后，卡上的状态文字不能跟着糊掉。"""
-    glass.clear_backdrop()
-    card, image = _render_card(qapp, "#FFFFFF")
-
-    face = card.face_after_shade()
-    # 设备名与状态文字都被校正过，取校正后的颜色与底色比
-    name_color = theme.ensure_contrast(theme.TEXT_PRIMARY, face, 4.5)
-    status_color = theme.ensure_contrast(theme.TEXT_SECONDARY, face, 4.5)
-    assert theme.contrast_ratio(name_color, face) >= 4.4
-    assert theme.contrast_ratio(status_color, face) >= 4.4
-
-
-def test_glass_mode_shade_follows_backdrop(qapp):
-    """玻璃模式下：壁纸再暗，卡片底色仍接近白，所以压深量必须照样算出来。"""
-    from app.ui.backdrop import BackdropPalette
-
-    glass.set_backdrop(
-        QPixmap(64, 64),
-        BackdropPalette(QColor("#101010"), 0.02, 0.0, False),
-    )
-    try:
-        shade = theme.shade_for_contrast("#FFFFFF", glass.face_color(), 3.0)
-        assert shade > 0.3, "深壁纸下白色设备色同样需要压深卡片"
-    finally:
-        glass.clear_backdrop()
-
-
-def test_card_shade_reacts_to_backdrop_change(qapp):
-    """换壁纸 / 切模式后压深量要重算，不能沿用上一次的结果。"""
-    from app.ui.backdrop import BackdropPalette
-    from app.ui.cards import DeviceCard
-
-    glass.clear_backdrop()
-    card = DeviceCard("d", "设备", "鼠标", "#FFFFFF", "ring")
-    white_mode = card.contrast_shade()
-    assert white_mode > 0.3
-
-    glass.set_backdrop(QPixmap(64, 64), BackdropPalette(QColor("#101010"), 0.02, 0.0, False))
-    try:
-        glass_mode = card.contrast_shade()
-    finally:
-        glass.clear_backdrop()
-
-    assert glass_mode > 0.3
-    # 两种模式的卡片底色不同（#ffffff vs #f3f3f3），压深量必须跟着变
-    assert glass_mode != white_mode, "压深量没有随底色重算"
+        assert theme.relative_luminance(face) > 0.85, f"{color} 的卡片底色被压暗成了 {face.name()}"

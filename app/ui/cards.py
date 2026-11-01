@@ -8,10 +8,13 @@ from PySide6.QtGui import QColor, QFontMetrics, QPainter
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ..core.model import Snapshot
-from . import theme
-from . import glass
+from . import glass, theme
 from .gauge import BatteryGauge
 from .glass import GlassSurface
+
+# 卡片上设备色的淡染强度：原来 0.10 太淡，浅色设备色几乎留不下痕迹。
+# 加深后设备色在卡片上更有存在感，也更容易和纯白背景区分开。
+CARD_TINT_ALPHA = 0.16
 
 
 class StatusLine(QWidget):
@@ -21,17 +24,8 @@ class StatusLine(QWidget):
         super().__init__(parent)
         self._text = "未同步"
         self._color = theme.TEXT_TERTIARY
-        self._text_color = theme.TEXT_SECONDARY
         self.setFixedHeight(16)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
-    def set_text_color(self, color: str | QColor) -> None:
-        """卡片底色变深时，状态文字要跟着加深，否则灰字糊在灰底上。"""
-        value = color.name() if isinstance(color, QColor) else color
-        if value == self._text_color:
-            return
-        self._text_color = value
-        self.update()
 
     def set_status(self, text: str, color: str) -> None:
         if text == self._text and color == self._color:
@@ -54,7 +48,7 @@ class StatusLine(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(self._color))
         painter.drawEllipse(QRectF(left, center_y - dot / 2, dot, dot))
-        painter.setPen(QColor(self._text_color))
+        painter.setPen(QColor(theme.TEXT_SECONDARY))
         painter.drawText(
             QRectF(left + dot + 5, 0, text_width + 2, self.height()),
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
@@ -84,9 +78,7 @@ class DeviceCard(GlassSurface):
         self.device_id = device_id
         self.type_label = type_label
         self._color = color
-        self.set_tint(color, 0.10)
-        # 设备色太浅时，靠压深卡片底色来衬托它 —— 图形颜色一律不动
-        self.set_contrast_foreground(color)
+        self.set_tint(color, CARD_TINT_ALPHA)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(152)
 
@@ -108,7 +100,6 @@ class DeviceCard(GlassSurface):
         layout.addWidget(self.status)
 
         self._snapshot: Optional[Snapshot] = None
-        self._text_tone: Optional[tuple[int, int, int]] = None
 
     def set_display_name(self, name: str) -> None:
         self.name_label.setText(name)
@@ -148,10 +139,8 @@ class DeviceCard(GlassSurface):
 
     def set_color(self, color: str) -> None:
         self._color = color
-        self.set_tint(color, 0.10)
-        self.set_contrast_foreground(color)
+        self.set_tint(color, CARD_TINT_ALPHA)
         self.gauge.set_color(color)
-        self._text_tone = None
 
     def set_style(self, style: str) -> None:
         self.gauge.set_style(style)
@@ -161,39 +150,13 @@ class DeviceCard(GlassSurface):
         """当前生效的强调色（测试与调试用）。"""
         return self._color
 
-    # -- 文字随底色 ---------------------------------------------------------
-    def face_after_shade(self) -> QColor:
-        """卡片压深之后的实际底色（近似）。"""
-        face = glass.face_color(
-            shell_alpha=0.74,
-            card_alpha=self.base_alpha,
-            backdrop_weight=self.backdrop_weight,
-        )
-        shade = self.contrast_shade()
-        keep = 1.0 - shade
-        return QColor(int(face.red() * keep), int(face.green() * keep), int(face.blue() * keep))
+    def set_style(self, style: str) -> None:
+        self.gauge.set_style(style)
 
-    def sync_text_contrast(self) -> None:
-        """按卡片实际底色校正名称与状态文字。
-
-        压深底色是为了衬托设备色，但深卡片上的灰字会跟着糊掉 ——
-        文字颜色也跟着底色走，保证两边都看得清。
-        结果按底色缓存：底色（随壁纸、悬停态变化）不变就不重算，
-        避免每帧都做一轮二分搜索。
-        """
-        face = self.face_after_shade()
-        signature = (face.red(), face.green(), face.blue())
-        if signature == self._text_tone:
-            return
-        self._text_tone = signature
-
-        name_color = theme.ensure_contrast(theme.TEXT_PRIMARY, face, 4.5)
-        self.name_label.setStyleSheet(f"color: {name_color.name()}; background: transparent;")
-        self.status.set_text_color(theme.ensure_contrast(theme.TEXT_SECONDARY, face, 4.5))
-
-    def paintEvent(self, event) -> None:  # noqa: N802
-        self.sync_text_contrast()
-        super().paintEvent(event)
+    @property
+    def color(self) -> str:
+        """当前生效的强调色（测试与调试用）。"""
+        return self._color
 
     @property
     def style(self) -> str:

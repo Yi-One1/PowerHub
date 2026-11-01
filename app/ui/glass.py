@@ -109,6 +109,41 @@ def environment_color() -> QColor:
     return QColor(_PALETTE.color)
 
 
+def _srgb_from_linear(value: float) -> int:
+    value = max(0.0, min(1.0, value))
+    srgb = 12.92 * value if value <= 0.0031308 else 1.055 * (value ** (1 / 2.4)) - 0.055
+    return int(round(max(0.0, min(1.0, srgb)) * 255))
+
+
+def face_color(
+    shell_alpha: float = 0.74,
+    card_alpha: float = 0.42,
+    backdrop_weight: float = 0.32,
+) -> QColor:
+    """卡片区域**实际呈现**的底色（灰度近似），给上层做对比度判断用。
+
+    玻璃是半透明的，字面颜色够不够看取决于最后叠出来的这块底色，而不是壁纸本身。
+    叠法按绘制顺序还原：壁纸 → 外壳白纱 → 卡片背景取样（只按 backdrop_weight 参与）
+    → 卡片白纱。三层的白纱都走 adaptive_scrim，所以暗壁纸下这条链会自动变亮。
+
+    没有底图（静态玻璃 / 截图失败）时直接返回纯白 —— 那本来就是一整块白底。
+    """
+    if _BACKDROP is None:
+        return QColor(255, 255, 255)
+    backdrop_luma = max(0.0, min(1.0, _PALETTE.luminance))
+    weight = max(0.0, min(1.0, backdrop_weight))
+
+    shell_scrim = adaptive_scrim(shell_alpha)
+    shell_luma = shell_scrim + (1 - shell_scrim) * backdrop_luma
+
+    card_base = weight * backdrop_luma + (1 - weight) * shell_luma
+    card_scrim = adaptive_scrim(card_alpha)
+    face_luma = card_scrim + (1 - card_scrim) * card_base
+
+    gray = _srgb_from_linear(face_luma)
+    return QColor(gray, gray, gray)
+
+
 # 白纱自适应的几个拐点
 SCRIM_FLOOR_RATIO = 0.42   # 亮背景下的通透度 = 传入 alpha × 这个比例
 SCRIM_CEILING = 0.78       # 最暗背景下的白纱上限（保证深色文字仍然清楚）

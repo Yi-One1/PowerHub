@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 
 TEXT_PRIMARY = "#1C1C1E"
@@ -68,6 +70,81 @@ def lighten(value: str, ratio: float = 0.25) -> QColor:
 
 def darken(value: str, ratio: float = 0.2) -> QColor:
     return mix(value, "#000000", ratio)
+
+
+# --------------------------------------------------------------------------- #
+# 对比度
+#
+# 设备颜色由用户自选，可以选到接近白色的值；而卡片底色可能是纯白。
+# 这时"忠实还原用户选的颜色"和"看得见"是冲突的 —— 一律以看得见为先，
+# 只在对比度不足时派生一个**同色相、明度更极端**的颜色用于绘制，
+# 用户配置里存的原色不动（下次换到深色卡片上仍原样生效）。
+# --------------------------------------------------------------------------- #
+def relative_luminance(value: str | QColor) -> float:
+    """WCAG 相对亮度（0 = 全黑，1 = 全白）。"""
+    color = QColor(value) if not isinstance(value, QColor) else value
+
+    def channel(raw: int) -> float:
+        srgb = raw / 255.0
+        return srgb / 12.92 if srgb <= 0.03928 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(color.red()) + 0.7152 * channel(color.green()) + 0.0722 * channel(color.blue())
+
+
+def contrast_ratio(a: str | QColor, b: str | QColor) -> float:
+    """WCAG 对比比（1.0 ~ 21.0）。3.0 是图形元素的可读下限。"""
+    la, lb = relative_luminance(a), relative_luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def ensure_contrast(
+    color: str | QColor,
+    background: str | QColor,
+    minimum: float = 3.0,
+) -> QColor:
+    """保证 color 在 background 上看得出轮廓。
+
+    做法是沿着明度轴把颜色往"远离背景"的方向推（背景亮就往暗推，反之往亮推），
+    色相与饱和度保持不变，所以蓝还是蓝、红还是红，只是深浅变了。
+    主方向推到底仍不够时才反着推一次；两边都不达标就返回对比更高的那个，
+    绝不会无脑返回原色。
+    """
+    fg = QColor(color) if not isinstance(color, QColor) else QColor(color)
+    bg = QColor(background) if not isinstance(background, QColor) else background
+    if contrast_ratio(fg, bg) >= minimum:
+        return fg
+
+    hue = fg.hueF()
+    hue = 0.0 if hue < 0 else hue
+    sat = fg.saturationF()
+    base_light = fg.lightnessF()
+    # 背景亮 → 往暗推；背景暗 → 往亮推
+    prefer_darker = relative_luminance(bg) >= 0.5
+
+    def scan(darker: bool) -> tuple[Optional[QColor], float]:
+        """沿一个方向逐格推，命中就返回；没命中返回该方向对比最高的那个。"""
+        best: Optional[QColor] = None
+        best_ratio = 0.0
+        for index in range(1, 51):
+            light = base_light - 0.02 * index if darker else base_light + 0.02 * index
+            if light < 0.0 or light > 1.0:
+                break
+            candidate = QColor.fromHslF(hue, sat, light)
+            ratio = contrast_ratio(candidate, bg)
+            if ratio >= minimum:
+                return candidate, ratio
+            if ratio > best_ratio:
+                best, best_ratio = candidate, ratio
+        return best, best_ratio
+
+    primary, primary_ratio = scan(prefer_darker)
+    if primary is not None and primary_ratio >= minimum:
+        return primary
+    secondary, secondary_ratio = scan(not prefer_darker)
+    if secondary is not None and secondary_ratio > primary_ratio:
+        return secondary
+    return primary if primary is not None else fg
 
 
 def app_stylesheet() -> str:

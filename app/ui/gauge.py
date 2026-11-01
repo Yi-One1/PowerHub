@@ -7,9 +7,13 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QBrush, QColor, QConicalGradient, QFontMetricsF, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from . import theme
+from . import glass, theme
 
 STYLE_HEIGHT = {"ring": 84, "bar": 44, "number": 58}
+# 图形元素的可读下限：低于 3:1 基本看不出轮廓（WCAG 对非文本图形的建议值）
+GAUGE_MIN_CONTRAST = 3.0
+# 渐变亮端的提亮幅度上限；底色越亮，实际提亮越少（见 _bright_end）
+GRADIENT_LIGHTEN = 0.42
 
 
 def _bolt_path(center: QPointF, size: float) -> QPainterPath:
@@ -92,13 +96,32 @@ class BatteryGauge(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # 卡片实际底色：设备色可能与它太接近（纯白卡片 + 纯白设备色），
+        # 下面三种样式都用 ensure_contrast 兜一层，颜色原值不动、只是深浅按需调整
+        face = glass.face_color()
         if self._style == "ring":
-            self._paint_ring(painter)
+            self._paint_ring(painter, face)
         elif self._style == "bar":
-            self._paint_bar(painter)
+            self._paint_bar(painter, face)
         else:
-            self._paint_number(painter)
+            self._paint_number(painter, face)
         painter.end()
+
+    def _visible_color(self, face: QColor) -> QColor:
+        """设备色：与卡片底色对比不足时压暗/提亮一档，色相不变。"""
+        return theme.ensure_contrast(self._color, face, minimum=GAUGE_MIN_CONTRAST)
+
+    def _bright_end(self, base: QColor, face: QColor) -> QColor:
+        """渐变亮端。
+
+        质感来自"暗到亮"的过渡，但底色本身已经够亮时，再往白里提就等于消失
+        （实测纯白卡片上 lighten(0.42) 后对比只剩 1.82:1）。所以提亮幅度按底色的
+        "暗度"缩放：白底几乎不提，深底才给满。最后再兜一次对比度。
+        """
+        room = 1.0 - theme.relative_luminance(face)
+        ratio = GRADIENT_LIGHTEN * max(0.0, min(1.0, room))
+        lighter = theme.lighten(base.name(), ratio)
+        return theme.ensure_contrast(lighter, face, minimum=GAUGE_MIN_CONTRAST)
 
     @property
     def _dim(self) -> bool:
@@ -109,7 +132,7 @@ class BatteryGauge(QWidget):
         """电量被隐藏但正在充电（例如迈从充电占位符 50%）。"""
         return self._charging and self._level is None
 
-    def _paint_ring(self, painter: QPainter) -> None:
+    def _paint_ring(self, painter: QPainter, face: QColor) -> None:
         rect = QRectF(self.rect()).adjusted(6, 6, -6, -6)
         thickness = 7.0
         arc_rect = rect.adjusted(thickness / 2, thickness / 2, -thickness / 2, -thickness / 2)
@@ -120,7 +143,7 @@ class BatteryGauge(QWidget):
             ratio = 1.0
             color = QColor(theme.OK)
         else:
-            color = QColor(self._color)
+            color = self._visible_color(face)
 
         if self._alert and not self._charging and ratio > 0 and not self._charging_placeholder:
             glow = QColor(theme.DANGER)
@@ -141,7 +164,7 @@ class BatteryGauge(QWidget):
             gradient = QConicalGradient(arc_rect.center(), 90)
             base = color
             gradient.setColorAt(0.0, base)
-            gradient.setColorAt(0.55, theme.lighten(color.name(), 0.42))
+            gradient.setColorAt(0.55, self._bright_end(color, face))
             gradient.setColorAt(1.0, base)
             pen = QPen(QBrush(gradient), thickness)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -174,12 +197,12 @@ class BatteryGauge(QWidget):
             painter.setPen(QColor(theme.TEXT_TERTIARY))
             painter.drawText(QPointF(left + num_width + 1.5, baseline), "%")
 
-    def _paint_bar(self, painter: QPainter) -> None:
+    def _paint_bar(self, painter: QPainter, face: QColor) -> None:
         rect = QRectF(self.rect())
         bar_height = 9.0
         bar = QRectF(rect.left(), rect.center().y() - bar_height / 2 + 5, rect.width(), bar_height)
         radius = bar_height / 2
-        color = QColor(theme.OK if self._charging_placeholder else self._color)
+        color = QColor(theme.OK) if self._charging_placeholder else self._visible_color(face)
         track = QColor(color if not self._dim else theme.TEXT_TERTIARY)
         track.setAlphaF(0.16)
         painter.setPen(Qt.PenStyle.NoPen)
@@ -194,7 +217,7 @@ class BatteryGauge(QWidget):
         if self._charging_placeholder or (self._level is not None and self._level > 0):
             gradient = QLinearGradient(fill.topLeft(), fill.topRight())
             gradient.setColorAt(0.0, color)
-            gradient.setColorAt(1.0, theme.lighten(color.name(), 0.38))
+            gradient.setColorAt(1.0, self._bright_end(color, face))
             painter.setBrush(QBrush(gradient))
             painter.drawRoundedRect(fill, radius, radius)
 
@@ -207,9 +230,9 @@ class BatteryGauge(QWidget):
             text + ("%" if self._level is not None and not self._charging_placeholder else ""),
         )
 
-    def _paint_number(self, painter: QPainter) -> None:
+    def _paint_number(self, painter: QPainter, face: QColor) -> None:
         rect = QRectF(self.rect())
-        color = QColor(theme.OK if self._charging_placeholder else self._color)
+        color = QColor(theme.OK) if self._charging_placeholder else self._visible_color(face)
         if self._charging_placeholder:
             text = "\u26a1"
             font_num = theme.font(38, 600, theme.NUMBER_FAMILIES, -1.2)

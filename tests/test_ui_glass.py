@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QLinearGradient, QPainter, QPixmap
 
-from app.ui import glass
+from app.ui import glass, theme
 from app.ui.backdrop import (
     DEFAULT_PALETTE,
     BackdropPalette,
@@ -332,6 +332,94 @@ def test_scrim_is_monotonic_in_background_darkness(base):
 def test_scrim_never_drops_below_a_usable_floor():
     glass.set_backdrop(*_solid("#FFFFFF"))
     assert glass.adaptive_scrim(0.30) >= 0.14
+
+
+def test_scrim_solves_for_a_readable_face_instead_of_a_fixed_ceiling():
+    """白纱厚度是按"目标亮度"反解的：任何壁纸下玻璃面都到得了 FACE_TARGET 附近。
+
+    老实现把上限拍在 0.78，深色壁纸下面板只到 #C8 左右，灰字糊成一片。
+    """
+    for gray in ("#000000", "#101014", "#5A5F66", "#7A8088", "#9AA0A8"):
+        pixmap, palette = _solid(gray)
+        glass.set_backdrop(pixmap, palette)
+        scrim = glass.adaptive_scrim(0.74)
+        behind = palette.luminance * 255
+        face = scrim * 255 + (1 - scrim) * behind
+        assert face >= glass.FACE_TARGET - 2, f"{gray}: 玻璃面只有 {face:.0f}"
+
+
+def test_face_target_is_above_the_tertiary_text_luminance_floor():
+    """FACE_TARGET 不是随手取的：它必须让三级灰字落在 3.5:1 以上。"""
+    face = QColor(glass.FACE_TARGET, glass.FACE_TARGET, glass.FACE_TARGET)
+    assert theme.contrast_ratio(QColor(theme.TEXT_TERTIARY), face) >= 3.5
+    assert theme.contrast_ratio(QColor(theme.TEXT_SECONDARY), face) >= 4.4
+
+
+# --------------------------------------------------------------------------- #
+# 五、深色壁纸下的灰字（问题：边缘先暗下去，页脚/副标题看不清）
+# --------------------------------------------------------------------------- #
+def _render_panel(fill: str) -> QImage:
+    """按主面板的真实比例铺一块外壳玻璃：420×560 的内容 + 12 阴影留白。"""
+    glass.set_backdrop(*_solid(fill))
+    return _render_glass(420, 560, base=fill, alpha=0.74, radius=30)
+
+
+def _mean_channel(image: QImage, x: int, y: int) -> int:
+    color = image.pixelColor(x, y)
+    return int(round((color.red() + color.green() + color.blue()) / 3))
+
+
+def test_edge_veil_thickens_on_a_dark_wallpaper():
+    """边缘白纱的比例按"只比中心暗一点"反解：亮背景 0.58，暗背景逼近 1。"""
+    glass.clear_backdrop()
+    assert glass.scrim_edge_ratio(0.5) == pytest.approx(glass.EDGE_RATIO_LIGHT)
+
+    ratios = []
+    for gray in ("#F4F6FA", "#B0B6C0", "#5A5F66", "#101014"):
+        glass.set_backdrop(*_solid(gray))
+        ratios.append(glass.scrim_edge_ratio(glass.adaptive_scrim(0.74)))
+
+    assert ratios == sorted(ratios)  # 越暗越厚，单调不打弯
+    assert ratios[0] == pytest.approx(glass.EDGE_RATIO_LIGHT, abs=0.02)
+    assert ratios[-1] >= 0.88
+    # 边缘最多和中心一样厚：反超会让玻璃看起来像描了一圈边
+    assert max(ratios) <= 1.0
+
+
+
+def test_dark_wallpaper_leaves_no_gray_corner():
+    """深色壁纸下，面板最暗的角落也得撑得住灰字 —— 页脚和副标题就贴在那儿。
+
+    这条是本次修复的核心：`edge = scrim × 0.58` 是固定的，暗壁纸下白纱加厚到
+    0.78 时边缘只剩 0.45，于是面板底边变成灰底灰字（实测 2.0:1）。
+    """
+    image = _render_panel("#0D0F14")
+    probes = [(20, 500), (400, 500), (20, 60), (210, 280)]
+    faces = [_mean_channel(image, x, y) for x, y in probes]
+
+    darkest = QColor(min(faces), min(faces), min(faces))
+    assert theme.contrast_ratio(QColor(theme.TEXT_SECONDARY), darkest) >= 4.3
+    assert theme.contrast_ratio(QColor(theme.TEXT_TERTIARY), darkest) >= 3.5
+    # 中心和边缘不能再差出一大截，否则文字颜色得为"最暗那一角"牺牲
+    assert max(faces) - min(faces) <= 26
+
+
+def test_light_wallpaper_still_lets_colour_through_at_the_edges():
+    """亮壁纸下边缘照旧薄于中心 —— 修复不能把"边缘融色"一起抹掉。"""
+    image = _render_panel("#F2F5FA")
+    centre = _mean_channel(image, 210, 280)
+    bottom_left = _mean_channel(image, 20, 520)
+    assert bottom_left <= centre + 2
+
+
+def test_medium_gray_wallpaper_is_not_the_worst_case():
+    """中灰壁纸是最坑的一档：老曲线给的纱既不够厚也不够薄，糊得比纯黑还厉害。"""
+    for fill in ("#5A5F66", "#7A8088"):
+        image = _render_panel(fill)
+        darkest = min(_mean_channel(image, 20, 500), _mean_channel(image, 400, 500))
+        face = QColor(darkest, darkest, darkest)
+        assert theme.contrast_ratio(QColor(theme.TEXT_SECONDARY), face) >= 4.0
+
 
 
 # --------------------------------------------------------------------------- #

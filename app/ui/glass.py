@@ -146,29 +146,65 @@ def face_color(
 
 # 白纱自适应的几个拐点
 SCRIM_FLOOR_RATIO = 0.42   # 亮背景下的通透度 = 传入 alpha × 这个比例
-SCRIM_CEILING = 0.78       # 最暗背景下的白纱上限（保证深色文字仍然清楚）
-COMFORT_LUMA = 0.62        # 背景亮到这一步就不再额外加纱
-LUMA_RANGE = 0.50          # 从 COMFORT_LUMA 往下多少亮度区间走满整条曲线
+SCRIM_CEILING = 0.90       # 最暗背景下的白纱上限（再厚玻璃就成了一块实心白板）
+# 玻璃面在暗背景下的目标灰度（0~255）：白纱只要刚好把背面压到这个亮度为止。
+# 226 是实测取出的下限 —— 再暗一点，三级灰字（页脚、副标题、分组标题）在深色
+# 壁纸下就掉到 4:1 以下，"深色壁纸时部分灰色字看不清"就是这么来的。
+FACE_TARGET = 226
+# 径向白纱的边缘强度（相对中心）。亮背景下薄，壁纸色从边上渗进来（边缘融色）；
+# 暗背景下必须厚到接近中心 —— 否则面板的底边和四角会先暗下去，
+# 而页脚、副标题、设置页分组标题恰好都贴在这些位置。
+EDGE_RATIO_LIGHT = 0.58
+# 边缘允许比中心暗几级（0~255）：这点亮度差就是那道柔和的"边缘融色"。
+# 12 级在白面上看得出来，又不足以把 4:1 的灰字压到 3:1 以下。
+EDGE_FALLOFF_LEVELS = 12
+# 悬停时额外盖的一层白高光（见 paint_glass 的 highlight 参数）
+HOVER_LIFT = 0.10
 
 
 def adaptive_scrim(base_alpha: float) -> float:
-    """感知内容自适应通透度：亮背景几乎不加纱，暗背景加厚到能压住深色文字。
+    """感知内容自适应通透度：亮背景几乎不加纱，暗背景加厚到灰字读得清。
 
     这是"柔光玻璃"和"白色半透明塑料板"的分界线。老实现是
     `base_alpha × (0.64 + 0.42 × darkness)`，亮背景仍有 0.5 以上的白纱，
-    壁纸的颜色全被洗掉，看上去就是一块磨砂白板。现在改成两段式：
-    亮背景只留 `base_alpha × 0.42`（让颜色透上来），越往暗处按 1.25 次幂抬到 0.78。
+    壁纸的颜色全被洗掉，看上去就是一块磨砂白板；后来改成两段式曲线，但上限
+    0.78 是凭感觉拍的，深色壁纸下玻璃面只到 #C8 左右 —— 灰字依旧发虚。
+
+    现在反过来算：**白纱厚度 = 刚好把玻璃面压到 FACE_TARGET 为止**。
+      * 亮背景（背面本来就比目标亮）→ 只铺 floor，让壁纸色透上来；
+      * 暗背景 → 按 `(目标 - 背面) / (255 - 背面)` 反解，不多铺一层。
+    "越暗越厚"于是是算出来的，不是调出来的：换任何壁纸都落在可读区间里，
+    也不会因为壁纸是中灰（最坑的一档）而糊成一片。
 
     没有背景图时直接返回调用方给的不透明度，保持老行为。
     """
     if _BACKDROP is None:
         return base_alpha
-    luma = max(0.0, min(1.0, _PALETTE.luminance))
-    darkness = max(0.0, min(1.0, (COMFORT_LUMA - luma) / LUMA_RANGE))
     floor = max(0.14, min(1.0, base_alpha * SCRIM_FLOOR_RATIO))
-    ceiling = max(floor, SCRIM_CEILING)
-    return floor + (ceiling - floor) * (darkness ** 1.25)
+    behind = 255.0 * max(0.0, min(1.0, _PALETTE.luminance))
+    need = 0.0
+    if behind < FACE_TARGET:
+        need = (FACE_TARGET - behind) / (255.0 - behind)
+    return max(floor, min(SCRIM_CEILING, need))
 
+
+def scrim_edge_ratio(scrim: float) -> float:
+    """边缘白纱相对中心的比例。
+
+    中心厚度按 FACE_TARGET 反解，边缘则按"比中心暗 EDGE_FALLOFF_LEVELS 级"反解，
+    再夹在 [0.58, 1] 之间：
+      * 亮壁纸：边缘本来就不缺亮度 → 0.58，壁纸色从边上渗进来，这就是"边缘融色"；
+      * 深色 / 中灰壁纸：抬到 0.9 以上，否则底边和四角先暗下去，
+        页脚、副标题、分组标题跟着一起糊掉（中灰壁纸是最坑的一档）。
+    """
+    if _BACKDROP is None or scrim <= 1e-6:
+        return EDGE_RATIO_LIGHT
+    behind = 255.0 * max(0.0, min(1.0, _PALETTE.luminance))
+    target_edge = FACE_TARGET - EDGE_FALLOFF_LEVELS
+    if behind >= target_edge:
+        return EDGE_RATIO_LIGHT
+    need = (target_edge - behind) / (255.0 - behind)
+    return max(EDGE_RATIO_LIGHT, min(1.0, need / scrim))
 
 
 def noise_pixmap() -> QPixmap:
@@ -264,6 +300,7 @@ def paint_glass(
     offset: Optional[QPointF] = None,
     backdrop_weight: float = 1.0,
     solid: bool = False,
+    highlight: float = 0.0,
 ) -> None:
     """绘制一块柔光玻璃。
 
@@ -274,6 +311,8 @@ def paint_glass(
                       此时白纱也不再自适应，按传入的 alpha 原样铺 —— 表单必须读得清。
     solid             纯白不透明模式：跳过白纱/噪点/柔光等玻璃笔触，整块填实心白。
                       白纱渐变的边缘只有 ~0.58 不透明度，靠调 alpha 到不了全不透明。
+    highlight         额外的高光罩（悬停反馈用）。不能靠调 alpha 实现：暗背景下白纱
+                      是按可读性目标反解的，alpha 已经不起作用了。
     """
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -323,7 +362,11 @@ def paint_glass(
     # 一片均匀的白纱会盖成一堵白墙；改成径向，中心保内容可读，四周薄下去，
     # 壁纸的颜色就从边缘渗进来，一眼能看出这是一块"透着的"玻璃。
     scrim = adaptive_scrim(alpha) if show_backdrop else alpha
-    edge = max(0.12, scrim * 0.58)
+    scrim = max(0.0, min(1.0, scrim + highlight))
+    # 边缘的薄厚跟着背景暗度走：亮壁纸保留"边缘融色"，暗壁纸把边缘一起加厚，
+    # 否则贴着边框的那圈（页脚、副标题、分组标题）会先变成灰底灰字
+    edge_ratio = scrim_edge_ratio(scrim) if show_backdrop else EDGE_RATIO_LIGHT
+    edge = max(0.12, scrim * edge_ratio)
     veil = QRadialGradient(
         QPointF(rect.center().x(), rect.center().y() - rect.height() * 0.06),
         max(rect.width(), rect.height()) * 0.82,
@@ -440,13 +483,15 @@ class GlassSurface(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        # 悬停时整块玻璃亮一点 —— 触摸要有回应
-        alpha = self.base_alpha + (0.12 if self.hovered else 0.0)
+        # 悬停时整块玻璃亮一点 —— 触摸要有回应。
+        # 走 highlight 而不是加 alpha：暗背景下白纱是按可读性目标反解的，
+        # 多加的那点 alpha 会被目标值吃掉，悬停就完全没反应了。
         paint_glass(
             painter,
             rect,
             self.radius,
-            alpha=min(0.96, alpha),
+            alpha=self.base_alpha,
+            highlight=HOVER_LIFT if self.hovered else 0.0,
             tint=self.tint,
             tint_alpha=self.tint_alpha + (0.06 if self.hovered else 0.0),
             offset=self.backdrop_offset(),

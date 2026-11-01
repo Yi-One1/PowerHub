@@ -144,6 +144,9 @@ def face_color(
     return QColor(gray, gray, gray)
 
 
+# 图形与底色的最低对比：低于 3:1 就压深底衬
+CONTRAST_MIN_RATIO = 3.0
+
 # 白纱自适应的几个拐点
 SCRIM_FLOOR_RATIO = 0.42   # 亮背景下的通透度 = 传入 alpha × 这个比例
 SCRIM_CEILING = 0.78       # 最暗背景下的白纱上限（保证深色文字仍然清楚）
@@ -264,6 +267,7 @@ def paint_glass(
     offset: Optional[QPointF] = None,
     backdrop_weight: float = 1.0,
     solid: bool = False,
+    shade: float = 0.0,
 ) -> None:
     """绘制一块柔光玻璃。
 
@@ -274,12 +278,16 @@ def paint_glass(
                       此时白纱也不再自适应，按传入的 alpha 原样铺 —— 表单必须读得清。
     solid             纯白不透明模式：跳过白纱/噪点/柔光等玻璃笔触，整块填实心白。
                       白纱渐变的边缘只有 ~0.58 不透明度，靠调 alpha 到不了全不透明。
+    shade             把整块底衬压深的黑色不透明度（0~1）。用于「设备色太浅、
+                      白底上看不见」的场景：改的是这块底色，不是前景颜色。
     """
+    shade = max(0.0, min(1.0, shade))
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     path = rounded_path(rect, radius)
     if solid:
-        painter.fillPath(path, QColor(255, 255, 255, 255))
+        base = 255 * (1.0 - shade)
+        painter.fillPath(path, QColor(int(base), int(base), int(base), 255))
         # 白色桌面上的白色面板必须有看得清的边界：一道浅灰细描边
         # （玻璃模式的白色高光描边在这里会隐身，故 solid 单独用灰色）
         painter.strokePath(path, QPen(QColor(0, 0, 0, 40), 1.2))
@@ -354,6 +362,11 @@ def paint_glass(
         tint_gradient.setColorAt(1.0, theme.color(tint, 0.0))
         painter.fillPath(path, QBrush(tint_gradient))
 
+    # ⑤.5 底衬压深：设备色太浅、白底上看不见时，把这块底色压暗（前景色不动）。
+    # 放在类型色之后、柔光与颗粒之前，压深的同时仍保留玻璃表面的质感。
+    if shade > 0.0:
+        painter.fillPath(path, QColor(0, 0, 0, int(round(255 * shade))))
+
     # ⑥ 左上柔光（点按有光的那束光）
     if glow:
         radial = QRadialGradient(
@@ -406,6 +419,8 @@ class GlassSurface(QWidget):
         self.tint_alpha = tint_alpha
         self.interactive = interactive
         self.backdrop_weight = backdrop_weight
+        # 这块面板上要显示的图形颜色；设了它，底色会自动压深到能衬托它
+        self.contrast_foreground: Optional[str] = None
         self.hovered = False
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         if interactive:
@@ -451,8 +466,29 @@ class GlassSurface(QWidget):
             tint_alpha=self.tint_alpha + (0.06 if self.hovered else 0.0),
             offset=self.backdrop_offset(),
             backdrop_weight=self.backdrop_weight,
+            shade=self.contrast_shade(),
         )
         painter.end()
+
+    def set_contrast_foreground(self, color: Optional[str]) -> None:
+        """声明"这块面板上要显示什么颜色的图形"，底色会按需要自动压深。"""
+        self.contrast_foreground = color
+        self.update()
+
+    def contrast_shade(self) -> float:
+        """为衬托 contrast_foreground 需要的压深量（0 表示不用压）。
+
+        每次绘制都现算：换壁纸、切玻璃/纯白模式后底色会变，压深量必须跟着变，
+        否则会出现"卡片已经够灰了还在继续压"或反过来的情况。
+        """
+        if not self.contrast_foreground:
+            return 0.0
+        face = face_color(
+            shell_alpha=0.74,
+            card_alpha=self.base_alpha,
+            backdrop_weight=self.backdrop_weight,
+        )
+        return theme.shade_for_contrast(self.contrast_foreground, face, CONTRAST_MIN_RATIO)
 
 
 class IconButton(QAbstractButton):

@@ -109,6 +109,9 @@ def ensure_contrast(
     色相与饱和度保持不变，所以蓝还是蓝、红还是红，只是深浅变了。
     主方向推到底仍不够时才反着推一次；两边都不达标就返回对比更高的那个，
     绝不会无脑返回原色。
+
+    注意：设备图形**不用**这个函数 —— 那边的策略是保持设备色原样、
+    改由卡片背景压深来保证可见性（见 shade_for_contrast）。
     """
     fg = QColor(color) if not isinstance(color, QColor) else QColor(color)
     bg = QColor(background) if not isinstance(background, QColor) else background
@@ -145,6 +148,51 @@ def ensure_contrast(
     if secondary is not None and secondary_ratio > primary_ratio:
         return secondary
     return primary if primary is not None else fg
+
+
+def shade_for_contrast(
+    foreground: str | QColor,
+    background: str | QColor,
+    minimum: float = 3.0,
+) -> float:
+    """要让 foreground 在 background 上看得清，需要把 background 压深多少。
+
+    返回 0~1 的**黑色不透明度**：0 表示现在的底色已经够，不用动。
+    前景色本身一个像素都不改 —— 需要对比度时改的是底色，不是前景。
+
+    只在背景偏亮、前景也偏亮（两者打架）时才有效：这种情况压深背景即可。
+    前景比背景暗时压深只会更糊，此时返回 0，交给调用方另想办法。
+    """
+    fg = QColor(foreground) if not isinstance(foreground, QColor) else foreground
+    bg = QColor(background) if not isinstance(background, QColor) else background
+    if contrast_ratio(fg, bg) >= minimum:
+        return 0.0
+
+    fg_luma = relative_luminance(fg)
+    # 压深后底色应有的亮度（线性空间解方程）：前景亮于这个值才有 3:1
+    target = (fg_luma + 0.05) / minimum - 0.05
+    if target < 0:
+        # 前景本身太暗，压到纯黑也给不出这个对比 —— 交给调用方别的办法
+        return 0.0
+    bg_luma = relative_luminance(bg)
+    if bg_luma <= target:
+        return 0.0
+
+    # 注：中途会经过"底色亮度与前景接近"的低对比区间，但最终落点比前景更暗，
+    # 对比是达标的 —— 不能因为"中途变差"就放弃。
+
+    def blend(alpha: float) -> QColor:
+        keep = 1.0 - alpha
+        return QColor(int(bg.red() * keep), int(bg.green() * keep), int(bg.blue() * keep))
+
+    low, high = 0.0, 1.0
+    for _ in range(24):
+        middle = (low + high) / 2
+        if relative_luminance(blend(middle)) > target:
+            low = middle
+        else:
+            high = middle
+    return high
 
 
 def app_stylesheet() -> str:

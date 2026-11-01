@@ -108,20 +108,24 @@ class BatteryGauge(QWidget):
         painter.end()
 
     def _visible_color(self, face: QColor) -> QColor:
-        """设备色：与卡片底色对比不足时压暗/提亮一档，色相不变。"""
-        return theme.ensure_contrast(self._color, face, minimum=GAUGE_MIN_CONTRAST)
+        """设备色原样返回。
+
+        可见性由**卡片背景**负责（DeviceCard 会按需要把底色压深），
+        图形本身一律用用户选的颜色，不做任何压暗/提亮。
+        face 参数保留是为了调用点统一，后续若要做别的前景适配也方便。
+        """
+        return QColor(self._color)
 
     def _bright_end(self, base: QColor, face: QColor) -> QColor:
         """渐变亮端。
 
-        质感来自"暗到亮"的过渡，但底色本身已经够亮时，再往白里提就等于消失
-        （实测纯白卡片上 lighten(0.42) 后对比只剩 1.82:1）。所以提亮幅度按底色的
-        "暗度"缩放：白底几乎不提，深底才给满。最后再兜一次对比度。
+        底色越亮，越不能额外往白里提，否则亮端会与卡片底色糊在一起
+        （实测纯白卡片上 lighten(0.42) 后对比只剩 1.82:1）。
+        这里只是收敛"提亮幅度"，不改设备色本身。
         """
         room = 1.0 - theme.relative_luminance(face)
         ratio = GRADIENT_LIGHTEN * max(0.0, min(1.0, room))
-        lighter = theme.lighten(base.name(), ratio)
-        return theme.ensure_contrast(lighter, face, minimum=GAUGE_MIN_CONTRAST)
+        return theme.lighten(base.name(), ratio)
 
     @property
     def _dim(self) -> bool:

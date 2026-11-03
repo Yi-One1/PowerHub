@@ -1,6 +1,6 @@
 # 项目进展（progress）
 
-> 更新：2026-11-03　版本：**v1.8.4**（`dist/电量中枢_PowerHub_v1.8.4.exe`）　状态：本地 **10 个提交待推**（沙箱代理对 GitHub 返回 502，需本机 push）
+> 更新：2026-11-03　版本：**v1.8.4**（`dist/电量中枢_PowerHub_v1.8.4.exe`）　状态：本地有未推送提交（沙箱代理对 GitHub 返回 502，需本机 push；运行 `git log origin/main..HEAD` 查看确切数量）
 
 ## 已完成
 
@@ -62,7 +62,7 @@
 
 ## 未完成待办
 
-- [ ] **推送 GitHub**：本地已积压 **10 个提交**（`git log origin/main..HEAD` 可查），沙箱代理对 GitHub 一直返回 502，需在本机 `cd 项目目录 && git push` 推送（本机不经该代理通畅）
+- [ ] **推送 GitHub**：本地有未推送提交（运行 `git log origin/main..HEAD` 查看数量），沙箱代理对 GitHub 一直返回 502，需在本机 `cd 项目目录 && git push` 推送（本机不经该代理通畅）
 - [ ] **部署新版本**（使用者选择暂不部署，产物只留在 `dist/`）：把新 exe 放到 `D:\桌面\APP\`，
       进设置页把开机自启关一次再开一次，注册表会自动从旧值 `PeripheralBattery` 迁到 `PowerHub`
 - [ ] （可选）`dist/` 下的历史产物要不要清理，交由使用者决定

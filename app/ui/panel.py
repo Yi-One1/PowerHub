@@ -38,6 +38,11 @@ log = logging.getLogger(__name__)
 MARGIN = 12          # 阴影留白，改小以减少截图软件识别的窗口边界与实际内容的偏差
 CONTENT_WIDTH = 420
 HEADER_HEIGHT = 58
+# 窗口与主屏「可用区域」（已扣掉任务栏）之间的固定留白。
+# 定位（_place_initial）与兜底夹取（_keep_in_screen）必须共用这一个数值：
+# 旧版一个写 10、一个写 8，打开时刚算好的位置在随后的夹取里又被挪 2px，
+# 而且两处数值谁对谁错没人说得清。测试也从这里导入，不许再写死 8/10。
+PANEL_EDGE_MARGIN = 10
 # 面板显示期间重取桌面底图的间隔。取整屏 + 1/8 缩放约 20~30 ms，
 # 15 秒一次摊下来对 CPU 的影响可以忽略，但换壁纸能在一刻钟内跟上。
 BACKDROP_REFRESH_MS = 15_000
@@ -170,6 +175,9 @@ class Panel(QWidget):
         self._notified: dict[str, float] = {}
         self._drag_offset: Optional[QPoint] = None
         self._settings_open = False
+        # 只表示"show_panel() 跑过没有"，不再决定要不要定位（定位是每次打开都做）。
+        # 现在服务于 _toggle_settings / _on_devices_changed 里的兜底夹取 ——
+        # 首次显示之前窗口还没被摆过，那时不该去做"按当前几何夹取"这种动作。
         self._first_show = True
         self._shown_at = 0.0
         self._has_backdrop = False
@@ -416,22 +424,51 @@ class Panel(QWidget):
 
     # --------------------------------------------------------------- 位置/拖拽
     def _keep_in_screen(self) -> None:
+        """把窗口夹进主屏可用区域，四边各留 ``PANEL_EDGE_MARGIN``。
+
+        边界用「可用区域左/上 + 宽/高」这种**排他右边界**算，而不是
+        ``QRect.right()/bottom()`` —— Qt 的 ``right()`` 是 ``left + width - 1``，
+        是"最后一个像素列"，拿它减宽度会让实测留白比常量多 1px，
+        于是同一份常量在两条路径上量出两个值。
+
+        窗口比可用区域还大时 ``min()`` 会胜出：宁可让左/上边出屏，也要把右/下边
+        留在屏内 —— 托盘就在屏幕右下角，用户能抓到的始终是那一角。
+        """
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             return
         area = screen.availableGeometry()
-        x = min(max(area.left() + 8, self.x()), area.right() - self.width() - 8)
-        y = min(max(area.top() + 8, self.y()), area.bottom() - self.height() - 8)
-        self.move(x, y)
+        margin = PANEL_EDGE_MARGIN
+        low_x = area.left() + margin
+        high_x = area.left() + area.width() - margin - self.width()
+        low_y = area.top() + margin
+        high_y = area.top() + area.height() - margin - self.height()
+        self.move(min(max(low_x, self.x()), high_x), min(max(low_y, self.y()), high_y))
 
     def _place_initial(self) -> None:
+        """把面板摆到主屏右下角（系统托盘区附近）。
+
+        尺寸取 ``self.size()``：``_resize_for_rows()`` 已经用 ``setFixedSize()``
+        把几何钉死了，``size()`` 就是那个被钉死的值，不依赖窗口管理器有没有装饰。
+        实测（本窗口 frameless）``frameGeometry().size() == size()``、``hide()``
+        之后两者也仍然一致，所以**不是**因为"未显示时 frameGeometry 不准"才这么写 ——
+        只是 ``size()`` 更直接地对应 ``setFixedSize`` 的语义，少绕一层窗口装饰的概念。
+
+        末尾那次 ``_keep_in_screen()`` 是**幂等兜底**，不是生效中的夹取：
+        这里算出的 x/y 恒等于 ``_keep_in_screen`` 的 ``high_x/high_y``，
+        所以此刻它是个空操作。留着它只为将来改这段算式时不至于漏掉边界保护，
+        「窗口比可用区域还大时保住右/下边」这个结论是算式本身给的，不是 ``min()`` 给的。
+        """
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             return
         area = screen.availableGeometry()
-        x = area.right() - self.width() - 10
-        y = area.bottom() - self.height() - 10
-        self.move(max(area.left(), x), max(area.top(), y))
+        margin = PANEL_EDGE_MARGIN
+        size = self.size()
+        x = area.left() + area.width() - margin - size.width()
+        y = area.top() + area.height() - margin - size.height()
+        self.move(x, y)
+        self._keep_in_screen()
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
@@ -455,19 +492,24 @@ class Panel(QWidget):
 
     # ------------------------------------------------------------------ 显示
     def show_panel(self) -> None:
-        if self._first_show:
-            self._place_initial()
-            self._first_show = False
+        # 无论上次关闭时停在设置页还是电量页，打开时一律回到电量显示页；
+        # 托盘菜单里的「设置…」走 open_settings()，会在此之后重新切到设置页。
+        # 这一步必须排在定位**之前**：设置页比电量页高一截（见 _resize_for_rows），
+        # 先定位再切页会让"按设置页高度算出来的 y"留在屏幕上 ——
+        # 收起时停在设置页、下次打开就悬在半空（下边距 200+ px），而不是回右下角。
+        if self._settings_open:
+            self._toggle_settings()
         if not self.isVisible():
+            # 只有"真的要新打开"才定位：用户已经把面板拖到顺手的位置、又从托盘菜单
+            # 点了一下（设备行 / 立即刷新 / 第二次启动 exe 唤醒单实例）时，
+            # 窗口不该被拽回右下角 —— 那 500+px 的位移纯属打扰，旧版也没有。
+            self._place_initial()
             # 必须在 show() 之前截屏，否则截到的是自己
             self._refresh_backdrop()
             self.show()
+        self._first_show = False
         self.raise_()
         self.activateWindow()
-        # 无论上次关闭时停在设置页还是电量页，打开时一律回到电量显示页；
-        # 托盘菜单里的「设置…」走 open_settings()，会在此之后重新切到设置页。
-        if self._settings_open:
-            self._toggle_settings()
         self.monitor.refresh()
 
     def _refresh_backdrop(self) -> None:
@@ -613,8 +655,17 @@ class Panel(QWidget):
         self.gear_btn.set_kind("back" if self._settings_open else "gear")
         self.gear_btn.setToolTip("返回" if self._settings_open else "设置")
         self.title.setText("设置" if self._settings_open else APP_DISPLAY_NAME)
+        # 切页会改高度（设置页比电量页高 200px 上下），所以**锁住下边缘**：
+        # 只调 _keep_in_screen() 是不够的 —— 它只在越界时才动，从高页退回矮页时
+        # 窗口只会向上缩、腾出来的空间不还给下边缘，面板就"漂"在半空
+        # （实测下边距 222px）。这里在切页前记下下边缘，切页后原样放回去，
+        # 最后再夹一次防越界 —— 不重算右下角，用户把面板拖到左边时不会被拽回右侧。
+        # 用 top()+height() 而不是 frameGeometry().bottom()：Qt 的 bottom() 是
+        # top + height - 1（最后一行像素），每切一次页就会往上漂 1px，几次就看得见。
+        bottom_edge = self.frameGeometry().top() + self.frameGeometry().height()
         self._resize_for_rows()
         if not self._first_show:
+            self.move(self.x(), bottom_edge - self.height())
             self._keep_in_screen()
         if self._settings_open:
             self.footer_text.setText("改动即时保存并生效")

@@ -23,7 +23,7 @@ from ..core.config import BACKGROUND_LIVE_GLASS, BACKGROUND_WHITE, DeviceRegistr
 from ..core.discovery import build_device_config
 from ..core.model import Snapshot
 from ..core.monitor import Monitor
-from ..core.paths import APP_DISPLAY_NAME, resource_root
+from ..core.paths import APP_DISPLAY_NAME, APP_EN_NAME, APP_VERSION, resource_root
 from ..core.presence import filter_visible, hidden_devices, ordered_devices
 from . import theme
 from .backdrop import capture_screen
@@ -52,6 +52,82 @@ FOOTER_HEIGHT = 42
 CARD_HEIGHT = 152
 CARD_GAP = 12
 PAGE_PADDING = 20
+
+# 品牌行的纵向微调（px）：三个标签都用 AlignBottom 排在同一条底边上，但字号差得多
+# （17px 中文 / 11px 西文 / 10px 胶囊，控件高实测 23 / 17 / 18，后两个已含下面那点补偿），
+# 底边齐平时那行小字在视觉上会显得往下坠 —— 所以按真实渲染的墨迹做了 2px 的光学微调。
+# 实测（tests/test_ui_header_brand.py 离屏 1:1 渲染、按 alpha 取墨迹）：
+#   · 不补偿时西文墨迹底边只比中文高 1px —— 也就是"共用底边"的字面结果，几何上没毛病；
+#   · 补 2px 后西文整体抬高 2px，视觉重心与中文对齐，8 倍放大图看起来才不歪。
+# 换句话说这是**光学校准**，不是几何纠偏：改字号/字重/字体后必须重新标定。
+#   BRAND_EN_NUDGE  —— 西文名的底部内边距，把文字本身抬高（底色透明，不影响观感）；
+#   BRAND_CHIP_RISE —— 版本胶囊的 QSS 下外边距。它参与 sizeHint，AlignBottom 下
+#                      标签底边不动、整体变高 n px，于是胶囊上沿与里面的文字一起升高
+#                      n px（文字在胶囊内仍然居中，实测上下留白 4/5px），
+#                      所以胶囊底边与中文墨迹底边依旧齐平。
+# 两者都会参与 sizeHint，所以抬高之后布局不会重叠。
+# 数值按实测墨迹定：差 1px 就能看出来，别随手改。
+BRAND_EN_NUDGE = 2
+BRAND_CHIP_RISE = 2
+
+
+def version_text() -> str:
+    """版本标签文本（形如 ``v1.8.4``）。
+
+    刻意在**函数体内**读模块级 ``APP_VERSION``，而不是在 import 时就拼成字面量：
+    这样版本号只有 ``app/core/paths.py`` 一个来源，测试也能通过替换模块属性
+    验证标签确实来自常量而非硬编码。
+    """
+    return f"v{APP_VERSION}"
+
+
+# ------------------------------------------------------------------ 胶囊（chip）配色
+# 面板上有两颗长得很像的胶囊：头部那颗「版本号」和页脚那颗「状态」。两者必须是**同一套灰**，
+# 否则同一界面里会出现两种灰的同一个控件。所以配色只在这里定义一次，样式由下面的函数生产，
+# 页脚 4 种状态（初始 / 演示数据 / N 台暂无电量 / 全部已连接）也全部走这两个函数 ——
+# 别在别处再写 `rgba(120,120,128,…)` 或 `color: {theme.TEXT_SECONDARY}` 的字面量。
+#
+# 为什么字色不是 TEXT_SECONDARY（#5C5C61）：胶囊压在玻璃面上，玻璃面不是纯白 ——
+# 中心被白纱压到 FACE_TARGET=226 级灰度，实测最暗角约 202 级（211 级面再乘 0.9 的取样衰减；
+# 比 FACE_TARGET - EDGE_FALLOFF_LEVELS = 214 那档更保守，测试按 202 算）。
+# 胶囊自己那层半透明底还会把面再压暗，于是"字 vs 底"的对比度比看上去更低：
+#   #5C5C61 + alpha 0.10 → 226 面 4.62、202 面 3.74（QA 报的"低于 AA"就是这个组合）
+#   #5C5C61 + alpha 0    → 202 面 4.06 ← 连"底色全透明"都到不了 4.3，这是它的数学上限，
+#   所以只调透明度救不回来，必须加深**字本身**。
+# 最终取 #4A4A4F（比 TEXT_SECONDARY 深一档，仍明显轻于 TEXT_PRIMARY #1C1C1E，不新增 token），
+# 底色透明度取 0.10 —— 再淡下去胶囊底与面板面只差 1.06:1，"胶囊"这个形状就快看不见了，
+# 形状本身也是要传的信息。合成后的实测四档（#4A4A4F on rgba(120,120,128,0.10)）：
+#   纯白 255 面 7.87、中心 226 面 6.13、边缘 214 面 5.54、最暗角 202 面 4.95
+# 合成公式：合成通道 = 胶囊底色 × alpha + 面灰度 × (1 - alpha)，逐通道四舍五入取整，
+# 再按 WCAG 相对亮度算对比度（theme.contrast_ratio）。
+# ⚠️ 改下面三个数之前先跑 tests/test_ui_header_brand.py 里的对比度用例（两颗胶囊都覆盖）。
+CHIP_TEXT = "#4A4A4F"
+CHIP_FILL = (120, 120, 128)      # 中性灰底；透明度单独给
+CHIP_FILL_ALPHA = 0.10
+
+
+def _chip_background() -> str:
+    """胶囊默认底色（中性灰 + 低透明度）。"""
+    red, green, blue = CHIP_FILL
+    return f"rgba({red},{green},{blue},{CHIP_FILL_ALPHA:g})"
+
+
+def chip_style(color: str = CHIP_TEXT, background: str | None = None) -> str:
+    """页脚状态胶囊的 QSS（圆角 9px、左右 9px / 上下 3px）。
+
+    默认走共用灰；演示数据（琥珀）与"全部已连接"（绿）只换颜色，形状参数仍然只有这一份。
+    """
+    return f"color: {color}; background: {background or _chip_background()}; border-radius: 9px; padding: 3px 9px;"
+
+
+def version_chip_style(color: str = CHIP_TEXT) -> str:
+    """头部版本胶囊的 QSS：与页脚同色，形状小一档，另加 2px 下外边距做基线补偿。"""
+    return (
+        f"color: {color}; background: {_chip_background()};"
+        # 下面这段 `margin: 0 0 Npx 0` 的字面形式被 test_compensation_constants_are_wired_into_the_widgets
+        # 依赖，改成 margin-bottom 或换插值方式会让那条断言失败 —— 要改先一起改断言。
+        f"border-radius: 7px; padding: 1px 7px; margin: 0 0 {BRAND_CHIP_RISE}px 0;"
+    )
 
 
 class _Shell(GlassSurface):
@@ -170,10 +246,35 @@ class Panel(QWidget):
         text_box.setSpacing(0)
         text_box.setContentsMargins(0, 0, 0, 0)
 
-        self.title = QLabel("电量中心", header)
+        # 品牌行：中文名 + 英文名 + 版本胶囊，三者共用一条底边；
+        # 行尾的 stretch 负责把右侧三个圆钮留在最右边（text_box 自己有 stretch=1）。
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(0, 0, 0, 0)
+        brand_row.setSpacing(6)
+
+        self.title = QLabel(APP_DISPLAY_NAME, header)
         self.title.setFont(theme.font(17, 600, theme.DISPLAY_FAMILIES, -0.2))
         self.title.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
-        text_box.addWidget(self.title)
+        brand_row.addWidget(self.title, 0, Qt.AlignmentFlag.AlignBottom)
+
+        self.brand_en = QLabel(APP_EN_NAME, header)
+        self.brand_en.setFont(theme.font(11, 500, theme.TEXT_FAMILIES))
+        self.brand_en.setStyleSheet(f"color: {theme.TEXT_TERTIARY}; background: transparent;")
+        # 底部内边距 = 西文的光学抬高量，见 BRAND_EN_NUDGE 的注释
+        self.brand_en.setContentsMargins(0, 0, 0, BRAND_EN_NUDGE)
+        brand_row.addWidget(self.brand_en, 0, Qt.AlignmentFlag.AlignBottom)
+
+        self.version_chip = QLabel(version_text(), header)
+        self.version_chip.setFont(theme.font(10, 600))
+        self.version_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 复用页脚胶囊那套观感：半透明底 + 圆角 + 左右留白，尺寸更小一档；
+        # margin-bottom 把胶囊里的文字一起抬高（底边保持齐平），见 BRAND_CHIP_RISE 的注释。
+        # 配色与页脚那颗共用 CHIP_*，理由见 version_chip_style() 上面那段推导。
+        self.version_chip.setStyleSheet(version_chip_style())
+        brand_row.addWidget(self.version_chip, 0, Qt.AlignmentFlag.AlignBottom)
+
+        brand_row.addStretch(1)
+        text_box.addLayout(brand_row)
 
         self.subtitle = QLabel("正在扫描…", header)
         self.subtitle.setFont(theme.font(10.5, 400))
@@ -238,10 +339,7 @@ class Panel(QWidget):
         self.chip = QLabel("", footer)
         self.chip.setFont(theme.font(10, 600))
         self.chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.chip.setStyleSheet(
-            f"color: {theme.TEXT_SECONDARY}; background: rgba(120,120,128,0.10);"
-            "border-radius: 9px; padding: 3px 9px;"
-        )
+        self.chip.setStyleSheet(chip_style())
         self.chip.hide()
         layout.addWidget(self.chip)
         return footer
@@ -514,7 +612,7 @@ class Panel(QWidget):
         self.stack.setCurrentWidget(self.settings if self._settings_open else self._page)
         self.gear_btn.set_kind("back" if self._settings_open else "gear")
         self.gear_btn.setToolTip("返回" if self._settings_open else "设置")
-        self.title.setText("设置" if self._settings_open else "电量中心")
+        self.title.setText("设置" if self._settings_open else APP_DISPLAY_NAME)
         self._resize_for_rows()
         if not self._first_show:
             self._keep_in_screen()
@@ -621,10 +719,8 @@ class Panel(QWidget):
 
         if self.store.prefs.demo:
             self.chip.setText("演示数据")
-            self.chip.setStyleSheet(
-                f"color: {theme.WARN_TEXT}; background: rgba(255,159,10,0.18);"
-                "border-radius: 9px; padding: 3px 9px;"
-            )
+            # 琥珀色是"演示数据"的专属语义色，只换颜色，形状/字号仍走共用函数
+            self.chip.setStyleSheet(chip_style(theme.WARN_TEXT, "rgba(255,159,10,0.18)"))
             self.chip.show()
             return
 
@@ -633,18 +729,12 @@ class Panel(QWidget):
         read = sum(1 for did, s in snapshots.items() if did in visible_ids and s.level is not None)
         if total and read < total:
             self.chip.setText(f"{total - read} 台暂无电量")
-            self.chip.setStyleSheet(
-                f"color: {theme.TEXT_SECONDARY}; background: rgba(120,120,128,0.10);"
-                "border-radius: 9px; padding: 3px 9px;"
-            )
+            self.chip.setStyleSheet(chip_style())
             self.chip.show()
             self.chip.setToolTip("把鼠标停在对应卡片上可以看到诊断信息")
         elif total:
             self.chip.setText("全部已连接")
-            self.chip.setStyleSheet(
-                f"color: {theme.OK}; background: rgba(47,196,138,0.14);"
-                "border-radius: 9px; padding: 3px 9px;"
-            )
+            self.chip.setStyleSheet(chip_style(theme.OK, "rgba(47,196,138,0.14)"))
             self.chip.show()
         else:
             self.chip.hide()

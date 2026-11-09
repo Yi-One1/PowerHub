@@ -15,6 +15,16 @@
 用 `widget.render()` 画到透明图上，按 alpha 取真实墨迹行范围再比 —— 字号变了、
 补偿被清零、标签被别的容器包一层，这些都会让断言失效，而矩形底边不会。
 绝对像素行（如「中文墨迹 y=18..35」）随 alpha 阈值会有 ±1px 漂移，因此不写进断言。
+
+环境依赖（本模块按「要不要真字形」分成两类）：
+* **依赖 Windows 字体文件**（`C:/Windows/Fonts` 下的 Segoe UI / 雅黑）的只有 3 条墨迹用例：
+  `test_chip_bottom_edge_is_flush_with_chinese_ink`、
+  `test_latin_and_chip_text_sit_slightly_above_chinese_ink`、
+  `test_zeroing_the_nudges_shifts_the_small_text_down_by_exactly_that_much`。
+  它们显式请求 `real_fonts` 夹具；缺字体时只跳过这 3 条（SKIP 原因写明「需要真实字体」）。
+* **与环境无关**的其余 17 条（文案、版式、截断、设置页切换、AA 对比度算术、源码守卫、
+  页脚四态同源）不挂该夹具，任何机器上都照常执行 —— 这些是 G2 的验收点，
+  绝不能因为一台机器缺字体就整模块静默 SKIP（那曾是被绿色掩盖的覆盖缺口）。
 """
 from __future__ import annotations
 
@@ -41,18 +51,24 @@ _FONT_FILES = (
 )
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="module", name="real_fonts")
 def real_fonts(qapp):
+    """注册真实字体（只给需要量墨迹的用例显式请求）。
+
+    刻意**不加 autouse**：registration 是进程级的，而 skip 是模块级的 ——
+    一旦 autouse，缺字体时整个模块 20 条会一起跳过，连纯算术的 AA 对比度用例
+    和纯文本的源码守卫都跑不到，报告却仍是绿的（覆盖面被静默吞掉）。
+    """
     available = [path for path in _FONT_FILES if path.exists()]
     if not available:
-        pytest.skip("系统缺少 Segoe UI / 微软雅黑字体，墨迹测量不可信")
+        pytest.skip("需要真实字体：系统缺少 Segoe UI / 微软雅黑（字形墨迹测量不可信）")
     loaded: list[int] = []
     for path in available:
         font_id = QFontDatabase.addApplicationFont(str(path))
         if font_id < 0:
             for known in loaded:
                 QFontDatabase.removeApplicationFont(known)
-            pytest.skip(f"字体加载失败：{path}")
+            pytest.skip(f"需要真实字体：{path} 加载失败")
         loaded.append(font_id)
     yield
     for font_id in loaded:
@@ -270,11 +286,14 @@ def test_brand_labels_fit_inside_header(panel):
 # --------------------------------------------------------------------------- #
 # 7. 底边对齐 / 光学微调（按墨迹量，不看控件矩形）
 # --------------------------------------------------------------------------- #
-def test_chip_bottom_edge_is_flush_with_chinese_ink(panel):
+def test_chip_bottom_edge_is_flush_with_chinese_ink(panel, real_fonts):
     """用户要的「共用一条底边」落在**胶囊底边 vs 中文墨迹底边**上（实测 1px）。
 
-    容差 1（原为 2）：把 BRAND_CHIP_RISE 归零后胶囊正好下沉 2px，容差 2 会放它过去（假绿），
-    收到 1 之后归零必定变红；现测偏移 1px，余量 0~1 仍由这条把住。
+    容差 1（原为 2）：现测偏移恰好 1px，容差 2 等于没有余量约束。
+    注意这条**抓不到** `BRAND_CHIP_RISE` 归零 —— QSS margin 在控件矩形内部，
+    归零时胶囊可视底边不移动（动的是胶囊里的文字与上沿）。归零由下面两条把住：
+    `test_latin_and_chip_text_sit_slightly_above_chinese_ink` 与
+    `test_zeroing_the_nudges_shifts_the_small_text_down_by_exactly_that_much`。
     """
     _, title_bottom = ink_rows(panel, panel.title)
     _, chip_bottom = ink_rows(panel, panel.version_chip)   # 含胶囊底色 = 胶囊本体
@@ -283,7 +302,7 @@ def test_chip_bottom_edge_is_flush_with_chinese_ink(panel):
     assert abs(delta) <= 1, f"胶囊底边与中文墨迹底边错开 {delta:+d}px，不再是一条底边"
 
 
-def test_latin_and_chip_text_sit_slightly_above_chinese_ink(panel):
+def test_latin_and_chip_text_sit_slightly_above_chinese_ink(panel, real_fonts):
     """BRAND_EN_NUDGE / BRAND_CHIP_RISE 的**结果**：两行小字的墨迹底边比中文略高。
 
     区间是光学校准值（16px 离屏实测：西文 +3px、胶囊文字 +5px）。清零补偿会掉到
@@ -307,7 +326,7 @@ def test_compensation_constants_are_wired_into_the_widgets(panel):
     assert f"margin: 0 0 {panel_module.BRAND_CHIP_RISE}px 0" in panel.version_chip.styleSheet()
 
 
-def test_zeroing_the_nudges_shifts_the_small_text_down_by_exactly_that_much(qapp, env, monkeypatch):
+def test_zeroing_the_nudges_shifts_the_small_text_down_by_exactly_that_much(qapp, env, monkeypatch, real_fonts):
     """A/B 对照：把两个常量清零重建面板，西文/胶囊文字必须整体下移常数量。
 
     这条既守住「补偿真的作用在排版上」，也钉住**方向**：补偿是把小字**抬高**，

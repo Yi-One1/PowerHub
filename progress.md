@@ -199,6 +199,6 @@ git push origin main
   注：`.pytest-tmp/` 会在下次跑 pytest 时自动重建，属正常行为。
 - **待用户手动完成**：按 `docs/RELEASE_NOTES_v1.9.0.md` 发布第一个 GitHub Release 并附上 exe。
   （代码推送已完成，不需要再做。）
-- **待确认（远端带入）**：`5041b9a Update LICENSE` 把版权人字样改成「Yi One」，
-  而 `README.md` 的许可证段落仍写「毅One」。这是用户在 GitHub 网页上做的修改，
-  本次合并原样接受；两处是否统一、统一成哪个名字，由使用者决定。
+- **版权人字样已统一为「毅One」**：远端提交 `5041b9a Update LICENSE` 曾把它改成
+  「Yi One」，2026-11-10 按用户决定改回 `LICENSE` 第 3 行 `Copyright (c) 2026 毅One`，
+  与 `README.md` 许可证段落一致。GitHub 账号 `Yi-One1` 是仓库地址，不属于版权人字样，不动。

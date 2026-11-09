@@ -83,7 +83,7 @@ Windows 10/11 x64，绿色单文件，无需安装。旧版本用户直接运行
 
 1. 打开 `https://github.com/Yi-One1/PowerHub/releases/new`。
 2. **Tag**：填 `v1.9.0`，target 选 `main`。
-   代码已于 2026-11-10 推送完毕（`main` 顶端 `3be3f66`），可以直接基于 `main` 建 tag。
+   代码已于 2026-11-10 推送完毕，本地与 `origin/main` 同步，可以直接基于 `main` 建 tag。
 3. **Release title**：填上面的标题。
 4. **正文**：复制上面「Release notes」代码块里的内容（不含最外层 ``` 围栏）。
 5. **Attach binaries**：上传 `dist/电量中枢_PowerHub_v1.9.0.exe`（45,941,141 字节）。

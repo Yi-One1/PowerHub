@@ -1,7 +1,7 @@
 # 项目进展（progress）
 
 > 更新：2026-11-10　版本：**v1.9.0**（`dist/电量中枢_PowerHub_v1.9.0.exe`）　状态：**已推送 GitHub**，
-> 本地与 `origin/main` 同步（顶端 `3be3f66`）；发布 Release 由用户手动完成（见 `docs/RELEASE_NOTES_v1.9.0.md`）
+> 本地与 `origin/main` 同步；发布 Release 由用户手动完成（见 `docs/RELEASE_NOTES_v1.9.0.md`）
 
 ## 已完成
 
@@ -110,7 +110,7 @@ v1.7.0~v1.8.4 七个旧产物的文件名与字节数逐个不变（只多这一
 
 ## 未完成待办
 
-- [x] **推送 GitHub**：已完成（2026-11-10），`main` 顶端为 `3be3f66`。
+- [x] **推送 GitHub**：已完成（2026-11-10），本地与 `origin/main` 0/0。
       过程：沙箱内前 3 次推送失败（schannel / 502 ×2）；用户本机首推被 `rejected (fetch first)`
       —— 远端多出 1 个本地没有的提交 `5041b9a Update LICENSE`（只把版权人字样
       「毅One」改成「Yi One」）。`git fetch origin main` 后确认分叉点 `b71c0bf` 之后

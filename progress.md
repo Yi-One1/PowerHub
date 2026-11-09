@@ -1,12 +1,12 @@
 # 项目进展（progress）
 
-> 更新：2026-11-03　版本：**v1.9.0**（`dist/电量中枢_PowerHub_v1.9.0.exe`）　状态：本地有未推送提交（沙箱代理对 GitHub 返回 502，需本机 push；运行 `git log origin/main..HEAD` 查看确切数量）
+> 更新：2026-11-10　版本：**v1.9.0**（`dist/电量中枢_PowerHub_v1.9.0.exe`）　状态：本地有未推送提交（本机沙箱推 GitHub 失败：`schannel: server closed abruptly`，需用户本机 `git push origin main`；运行 `git log origin/main..HEAD` 查看确切数量）
 
 ## 已完成
 
 | 事项 | 提交 |
 |---|---|
-| G5：升 **v1.9.0** + 打包单文件 exe 到 `dist/`（7 个旧产物一个不动）+ 文档同步；新增版本号 AST 单一来源护栏；`pytest.ini` 加 `--basetemp` 修好「不带参数跑 pytest 会在 sessionfinish 崩」 | 本轮（待提交） |
+| G5：升 **v1.9.0** + 打包单文件 exe 到 `dist/`（7 个旧产物一个不动）+ 文档同步；新增版本号 AST 单一来源护栏；`pytest.ini` 加 `--basetemp` 修好「不带参数跑 pytest 会在 sessionfinish 崩」 | `68961ff` |
 | 设置页删「演示数据」开关（能力保留、旧配置 `demo:true` 加载即忽略）+ 拖动手柄 6 点改为严格等距 + 「全部已连接」改灰底绿点 | `fa6c7d0` |
 | 主页面每次打开都落到**主屏右下角**（托盘区）；顺带修掉「收起时停在设置页 / 齿轮往返」导致的面板悬空 222px | `8756ce6` |
 | 主页面头部改为「电量中枢 · PowerHub · v版本」一行并列，版本号取自 `APP_VERSION` | `56c76be` |
@@ -32,6 +32,15 @@
 | 进展文档同步到 v1.8.4（含本轮白底白环 + 深色壁纸灰字两轮修复记录） | `d7d1c37` |
 
 测试：**478 passed / 1 skipped**（skip 为真机无应答的 live 用例；本轮新增 `tests/test_version_source.py` 3 条，共 39 个测试文件、479 项）。
+显式 `--basetemp` 与**不带参数的 `-m pytest`** 两次跑法结果一致（`pytest.ini` 已固定 basetemp）。
+
+**打包与启动验收（v1.9.0）**：产物 `dist/电量中枢_PowerHub_v1.9.0.exe` = **45,941,141 字节**；
+v1.7.0~v1.8.4 七个旧产物的文件名与字节数逐个不变（只多这一件），未部署到桌面。
+用新 exe 做了两轮启动验证（均带 `--tray`、各 15s+15s、结束用 `taskkill /T /F` 清理父子进程）：
+- `-v --tray`：启动横幅 + `监测线程启动` + **`扫描完成：1/4 台有数据`（DEBUG 行确实落进 `app.log`）**，两段等待内无 `Traceback`/`ERROR`；
+- 默认 `--tray`：启动横幅 + `监测线程启动`（无 DEBUG 行，符合 INFO 口径）、无异常。
+两轮进程均正常存活到第二段结束、清理后无残留；用户层 `devices.json` 只被读取、未改写。
+结论：**已验证启动并跑完一轮扫描**。窗口外观（版本胶囊 / 右下角定位 / 托盘图标）未做视觉确认（按约定不截屏）。
 
 ## 关键决策
 
@@ -100,7 +109,9 @@
 
 ## 未完成待办
 
-- [ ] **推送 GitHub**：本地有未推送提交（运行 `git log origin/main..HEAD` 查看数量），沙箱代理对 GitHub 一直返回 502，需在本机 `cd 项目目录 && git push` 推送（本机不经该代理通畅）
+- [ ] **推送 GitHub**：本地 23 个未推送提交。2026-11-10 在沙箱试推过一次，失败：
+      `fatal: unable to access 'https://github.com/Yi-One1/PowerHub.git/': schannel: server closed abruptly (missing close_notify)`
+      （远端已切到改名后的 `Yi-One1/PowerHub.git`；按约定只试一次、不重试）。用户本机 `cd 项目目录 && git push origin main` 通畅。
 - [x] **部署新版本**：用户已明确「**不需要部署到桌面，只打包到 `dist/`**」—— 不再复制到 `D:\桌面\APP\`，也不再需要「关一次再开一次自启」的迁移动作
 - [ ] （可选）`dist/` 下的历史产物要不要清理，交由使用者决定
 

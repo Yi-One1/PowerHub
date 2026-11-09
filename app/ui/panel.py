@@ -77,7 +77,7 @@ BRAND_CHIP_RISE = 2
 
 
 def version_text() -> str:
-    """版本标签文本（形如 ``v1.8.4``）。
+    """版本标签文本（形如 ``v<主>.<次>.<修>``）。
 
     刻意在**函数体内**读模块级 ``APP_VERSION``，而不是在 import 时就拼成字面量：
     这样版本号只有 ``app/core/paths.py`` 一个来源，测试也能通过替换模块属性

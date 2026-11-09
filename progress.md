@@ -1,11 +1,12 @@
 # 项目进展（progress）
 
-> 更新：2026-11-03　版本：**v1.8.4**（`dist/电量中枢_PowerHub_v1.8.4.exe`）　状态：本地有未推送提交（沙箱代理对 GitHub 返回 502，需本机 push；运行 `git log origin/main..HEAD` 查看确切数量）
+> 更新：2026-11-03　版本：**v1.9.0**（`dist/电量中枢_PowerHub_v1.9.0.exe`）　状态：本地有未推送提交（沙箱代理对 GitHub 返回 502，需本机 push；运行 `git log origin/main..HEAD` 查看确切数量）
 
 ## 已完成
 
 | 事项 | 提交 |
 |---|---|
+| G5：升 **v1.9.0** + 打包单文件 exe 到 `dist/`（7 个旧产物一个不动）+ 文档同步；新增版本号 AST 单一来源护栏；`pytest.ini` 加 `--basetemp` 修好「不带参数跑 pytest 会在 sessionfinish 崩」 | 本轮（待提交） |
 | 设置页删「演示数据」开关（能力保留、旧配置 `demo:true` 加载即忽略）+ 拖动手柄 6 点改为严格等距 + 「全部已连接」改灰底绿点 | `fa6c7d0` |
 | 主页面每次打开都落到**主屏右下角**（托盘区）；顺带修掉「收起时停在设置页 / 齿轮往返」导致的面板悬空 222px | `8756ce6` |
 | 主页面头部改为「电量中枢 · PowerHub · v版本」一行并列，版本号取自 `APP_VERSION` | `56c76be` |
@@ -30,7 +31,7 @@
 | HECATE G3 MAX：补充电位 `byte7` 的 **bit0**，修复充电不显示「充电中」 | `face728` |
 | 进展文档同步到 v1.8.4（含本轮白底白环 + 深色壁纸灰字两轮修复记录） | `d7d1c37` |
 
-测试：**475 passed / 1 skipped**（skip 为真机无应答的 live 用例）。
+测试：**478 passed / 1 skipped**（skip 为真机无应答的 live 用例；本轮新增 `tests/test_version_source.py` 3 条，共 39 个测试文件、479 项）。
 
 ## 关键决策
 
@@ -100,14 +101,22 @@
 ## 未完成待办
 
 - [ ] **推送 GitHub**：本地有未推送提交（运行 `git log origin/main..HEAD` 查看数量），沙箱代理对 GitHub 一直返回 502，需在本机 `cd 项目目录 && git push` 推送（本机不经该代理通畅）
-- [ ] **部署新版本**（使用者选择暂不部署，产物只留在 `dist/`）：把新 exe 放到 `D:\桌面\APP\`，
-      进设置页把开机自启关一次再开一次，注册表会自动从旧值 `PeripheralBattery` 迁到 `PowerHub`
+- [x] **部署新版本**：用户已明确「**不需要部署到桌面，只打包到 `dist/`**」—— 不再复制到 `D:\桌面\APP\`，也不再需要「关一次再开一次自启」的迁移动作
 - [ ] （可选）`dist/` 下的历史产物要不要清理，交由使用者决定
+
+## 已知问题 / 待办（只记录，本轮不动手修）
+
+1. **`DeviceRegistry.save_user_config()` 吞掉写盘异常**：`except Exception: log.error` 后只返回 `False`，磁盘瞬时失败时内存已改、磁盘没改，界面看着成功、重启后操作丢失（QA 用 monkeypatch 精确复现过）。下一步建议：重试一次 + 失败让上层感知 + 补测试。
+2. **设置页「开机自启动」说明与实际路径脱节**：说明写死「写入当前用户的启动项，无需管理员权限」，没告诉用户真实注册表位置 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`、值名 `PowerHub`、值数据为当前 exe 命令行 + `--tray`。`autostart.open_task_manager_startup()` 已实现但**未接到界面**，适合单独做一轮。
+3. **面板 `subtitle` 超宽会硬裁且无省略号**：该标签用了 `QSizePolicy.Ignored`（横向），未来文案一长就会静默截断。当前四种实际文案需要 47 / 70 / 155 / 140px，标签可用 284px（富余 ≥129px），**现在不触发**；加长时改用 `QFontMetrics.elidedText()` 或缩短文案。
+4. **待复核：「副标题在设置页被裁成『正在扫』」** —— QA 报告，工程离屏实测**未复现**：注册系统字体后该文案需要 47px、标签可用 284px（纵向也余 3px）；且「正在扫描…」只在电量页构造时出现，进设置页即被 `_update_subtitle()` 覆盖成「设备清单、颜色、样式与启动项」。记为**待复核**，不当 bug 写死；等 QA 补截图与复现条件（窗口宽 / DPI / 哪个页面）。
+5. **`preview/` 面板截图停留在 10-20**：未反映 v1.8.1~v1.9.0 的玻璃边缘 / 浅色设备色 / 头部品牌行改动。
 
 ## 接续要点
 
-- 跑测试：`./.venv/Scripts/python.exe -m pytest tests --basetemp=.pytest-tmp`
-  （pytest 临时目录偶被占用，用 `--basetemp` 绕开；`pytest.ini` 已含 `-q`，别再重复加）
+- 跑测试：直接 `./.venv/Scripts/python.exe -m pytest` 即可 —— `pytest.ini` 的 `addopts` 已带
+  `--basetemp=.pytest-tmp`，绕开本机那个删不掉的 `pytest-current` 损坏 junction（不带 `--basetemp`
+  曾导致 sessionfinish 崩、exit 1）；命令行显式 `--basetemp=...` 仍然优先（`pytest.ini` 已含 `-q`，别再重复加）
 - 打包：`./.venv/Scripts/python.exe tools/build_exe.py`（单文件）/ `--onedir`（目录版）；
   **venv 重建后需补装 PyInstaller**；目标 exe 被占用时先退出软件
 - 托盘相关测试：需要把 `SWAP_DELAY_MS`、`CREATE_INTERVAL_MS` 都归零，再用「空转事件循环」

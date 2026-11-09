@@ -396,9 +396,11 @@ run.bat
 
 :: 3) 打包成 exe（产物名 = 中文名 + 英文名 + 版本号）
 .venv\Scripts\python.exe -m pip install pyinstaller
-.venv\Scripts\python.exe tools\build_exe.py            :: 单文件 dist\电量中枢_PowerHub_v1.8.0.exe
+.venv\Scripts\python.exe tools\build_exe.py            :: 单文件 dist\电量中枢_PowerHub_v1.9.0.exe
 .venv\Scripts\python.exe tools\build_exe.py --onedir   :: 目录版，冷启动更快
 ```
+
+> 演示数据只在命令行可用（`main.py --demo`），设置页已不再提供「演示数据」开关。
 
 **版本与产物规则**
 

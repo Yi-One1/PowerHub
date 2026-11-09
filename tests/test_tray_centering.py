@@ -39,28 +39,46 @@ _FONT_FILES = (
 BADGE_CENTER = 8.0
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="module")
 def real_fonts(qapp):
     """把系统字体注册进离屏 Qt，否则数字会被渲染成方块，像素测量没有意义。
 
     注册是**进程级**的，跑完必须摘掉：后面的测试模块（对比度、仪表盘）里
     有不少按像素计数定的阈值，字体一换口径就变了，属于不该被本文件影响的邻居。
+
+    刻意**不加 autouse**：skip 是模块级、注册是进程级，一旦 autouse，缺字体时
+    整个模块 29 条会一起静默 SKIP —— 连纯几何的 `_badge_rect` 护栏和只比绘制
+    起点的用例都跑不到，报告却仍然是绿的（覆盖面被吞掉）。所以只让真正量字形
+    墨迹的那 24 条显式请求本夹具。
     """
     available = [path for path in _FONT_FILES if path.exists()]
     if not available:
-        pytest.skip("系统缺少 Segoe UI / 微软雅黑字体，像素测量不可信")
+        pytest.skip("需要真实字体：系统缺少 Segoe UI / 微软雅黑（字形墨迹测量不可信）")
     loaded: list[int] = []
     for path in available:
         font_id = QFontDatabase.addApplicationFont(str(path))
         if font_id < 0:
             for known in loaded:
                 QFontDatabase.removeApplicationFont(known)
-            pytest.skip(f"字体加载失败：{path}")
+            pytest.skip(f"需要真实字体：{path} 加载失败")
         loaded.append(font_id)
-    assert "Segoe UI" in QFontDatabase.families(), "字体库里没有 Segoe UI，数字会退化成方块"
+    if "Segoe UI" not in QFontDatabase.families():
+        pytest.skip("需要真实字体：注册后字体库里仍没有 Segoe UI")
     yield
     for font_id in loaded:
         QFontDatabase.removeApplicationFont(font_id)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _qt_app(qapp):
+    """所有用例都必须有 QApplication。
+
+    刻意 autouse：`QPixmap` / `QPainter` 在没有 QApplication 时**不是抛异常，
+    而是直接 abort 整个进程**（实测退出码 0xC0000409，stdout 一个字都没有）。
+    那比一条红更糟 —— 报告只剩半截，很容易被误判成并行抢 basetemp。
+    所以这里把 qapp 兜住，不依赖任何用例自己记得请求。
+    """
+    return qapp
 
 
 def _center_tolerance(size: int) -> float:
@@ -162,12 +180,14 @@ def _assert_centered(level: int, color: str, size: int, min_aspect: float = 1.3)
 # 像素级验收：各尺寸 × 两位数/三位数 × 深底白字/浅底深字
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("size", (16, 18, 20, 24, 32, 40, 48, 64))
+@pytest.mark.usefixtures("real_fonts")
 def test_two_digit_number_is_centered_on_every_icon_size(size):
     """两位数（PERCENT_FONT）在全部图标尺寸下两端居中。"""
     _assert_centered(88, "#0A84FF", size)
 
 
 @pytest.mark.parametrize("size", (16, 18, 20, 24, 32, 40, 48, 64))
+@pytest.mark.usefixtures("real_fonts")
 def test_three_digit_number_is_centered_on_every_icon_size(size):
     """三位数 100（PERCENT_FONT_COMPACT，字更小更扁）在全部尺寸下同样居中。"""
     _assert_centered(100, "#0A84FF", size)
@@ -179,6 +199,7 @@ FOREGROUND_SAMPLES = ("#F2E3A0", "#FFE066", "#FFFFFF", "#2FC48A", "#FF453A")
 
 
 @pytest.mark.parametrize("color", FOREGROUND_SAMPLES)
+@pytest.mark.usefixtures("real_fonts")
 def test_digits_are_centered_for_both_foreground_colors(color):
     """前景色自动切换不该影响几何：浅底深字与深底白字都要居中。
 
@@ -194,6 +215,7 @@ def test_digits_are_centered_for_both_foreground_colors(color):
         _assert_centered(88, color, size)
 
 
+@pytest.mark.usefixtures("real_fonts")
 def test_centering_does_not_depend_on_the_digits():
     """不同数字（1 窄、8 宽、100 最宽）的墨迹中心都落在同一处。
 
@@ -230,6 +252,7 @@ def test_charging_does_not_move_the_digits(monkeypatch):
     assert charging[0] == idle[0], f"充电时数字位置不该动：{idle[0]} → {charging[0]}"
 
 
+@pytest.mark.usefixtures("real_fonts")
 def test_digits_still_fill_the_badge_width():
     """数字墨迹占徽标宽度约八成：够满（不是缩在中间的小字），也不溢出圆角块。
 
@@ -252,7 +275,13 @@ def test_digits_still_fill_the_badge_width():
 def _outline_center(font, text: str) -> QPointF:
     path = QPainterPath()
     path.addText(QPointF(0.0, 0.0), font, text)
-    return path.boundingRect().center()
+    box = path.boundingRect()
+    # 实测：空串 / 空格 / 全角空格 / 零宽空格均返回 0×0；真·无字形环境同理。
+    # 这种时候「轮廓中心」没有意义（实现会走 _ink_box 的兜底分支），
+    # 继续比下去只会得到一条假红，所以降级成诚实的 SKIP。
+    if box.width() <= 0.01 or box.height() <= 0.01:
+        pytest.skip("需要真实字体：无可用字形，轮廓自洽性检查不成立")
+    return box.center()
 
 
 @pytest.mark.parametrize("size", (16, 32, 64))
@@ -310,6 +339,7 @@ def _render_legacy(level: int, color: str, size: int) -> QImage:
     return pixmap.toImage()
 
 
+@pytest.mark.usefixtures("real_fonts")
 def test_legacy_align_center_geometry_is_rejected():
     """旧画法按行高居中，纵向偏低 —— 新容差必须把它判为不合格。"""
     base = QColor("#0A84FF")

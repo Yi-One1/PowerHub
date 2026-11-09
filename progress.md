@@ -109,9 +109,10 @@ v1.7.0~v1.8.4 七个旧产物的文件名与字节数逐个不变（只多这一
 
 ## 未完成待办
 
-- [ ] **推送 GitHub**：本地 23 个未推送提交。2026-11-10 在沙箱试推过一次，失败：
-      `fatal: unable to access 'https://github.com/Yi-One1/PowerHub.git/': schannel: server closed abruptly (missing close_notify)`
-      （远端已切到改名后的 `Yi-One1/PowerHub.git`；按约定只试一次、不重试）。用户本机 `cd 项目目录 && git push origin main` 通畅。
+- [ ] **推送 GitHub**：本地 **24 个**未推送提交。2026-11-10 在沙箱共试过 3 次，均失败：
+      `schannel: server closed abruptly (missing close_notify)`（1 次）、
+      `CONNECT tunnel failed, response 502`（常规推送与 `-c http.version=HTTP/1.1 -c http.sslBackend=openssl` 各 1 次）。
+      远端地址正确：`https://github.com/Yi-One1/PowerHub.git`。属沙箱代理问题，请按下方「手动推送教程」在本机执行。
 - [x] **部署新版本**：用户已明确「**不需要部署到桌面，只打包到 `dist/`**」—— 不再复制到 `D:\桌面\APP\`，也不再需要「关一次再开一次自启」的迁移动作
 - [ ] （可选）`dist/` 下的历史产物要不要清理，交由使用者决定
 
@@ -137,3 +138,55 @@ v1.7.0~v1.8.4 七个旧产物的文件名与字节数逐个不变（只多这一
   `app/core/protocols.py`（协议解析）、`app/core/model.py`（显示逻辑）、
   `app/ui/tray.py`（托盘图标绘制与槽位管理）、`app/ui/settings.py`（设置页）、`app/core/autostart.py`（自启 + 旧值迁移）
 - 长期记忆：`.workbuddy/memory/MEMORY.md`；历史日志：`.workbuddy/memory/2026-1*.md`
+
+## 手动推送 GitHub 教程（沙箱代理不通时用）
+
+在本机（不经沙箱代理）打开 **Git Bash / PowerShell / CMD**，逐条执行：
+
+```bat
+cd /d "E:\AI工作空间\电量中枢PowerHub"
+
+:: 1) 先看状态：应当显示工作区干净、且提示领先 origin/main 若干个提交
+git status
+git log origin/main..HEAD --oneline
+
+:: 2) 确认远端是改名后的仓库
+git remote -v
+::    期望： https://github.com/Yi-One1/PowerHub.git
+::    若还是旧名，执行：
+::    git remote set-url origin https://github.com/Yi-One1/PowerHub.git
+
+:: 3) 推送
+git push origin main
+```
+
+推送成功会打印 `main -> main`；再到 `https://github.com/Yi-One1/PowerHub` 刷新，
+确认最新提交是 `0a71446`（或之后的新提交）。
+
+**如果报 `non-fast-forward` / `rejected`**（远端有本地没有的提交）：
+先 `git pull --rebase origin main`，解决冲突后再 `git push origin main`。**不要用 `--force`**。
+
+**如果报认证失败**：GitHub 已不支持账号密码，改用 Personal Access Token（PAT）：
+`Settings → Developer settings → Personal access tokens → Generate new token (classic)`，
+勾选 `repo` 权限，然后在推送时用 `https://<用户名>:<PAT>@github.com/Yi-One1/PowerHub.git` 作为地址
+（`git remote set-url origin ...`），或安装 GitHub CLI 后 `gh auth login`。
+
+**如果仍然 502 / schannel 报错**（本机也走了代理）：
+`git config --global --unset http.proxy`、`git config --global --unset https.proxy` 后重试；
+或 `git -c http.proxy= push origin main` 临时绕过。
+
+## 验收与收尾（2026-11-10）
+
+- 用户已对 5 组改动给出**总验收通过**。
+- **发布**：本次发布版本定为 **v1.9.0**（查证过 GitHub 上本仓库 0 个 Release，不撞车）。
+  Release 标题、正文、SHA-256、操作步骤都写在 `docs/RELEASE_NOTES_v1.9.0.md`，由用户手动发布。
+- **文档整理**：README 修掉重复的章节编号（原有两个「五」、两个「七」→ 顺排为七/八/九/十），
+  测试文件表补上本轮新增的 5 个文件与「39 文件 / 479 项」总数，抬头加当前版本与产物信息，
+  并注明 `preview/` 截图仍为 10-20 旧版；progress 补推送实况、手动教程与本节。
+- **清理（已获用户授权）**：删除 6 项临时/缓存文件 —— `.pytest-tmp/`、`.pytest_cache/`、
+  `app|tests|tools/__pycache__/`、`.tmp_commit_msg.txt`。实际执行时只有 `.pytest-tmp/`（190 KB）
+  仍在，其余 5 项已被自动清理；删除后逐项核对均不存在，`git status` 干净。
+  **明确保留**：`dist/` 八个 exe、`preview/` 12 张截图、`.venv/`、`.workbuddy/` 与全部源码。
+  注：`.pytest-tmp/` 会在下次跑 pytest 时自动重建，属正常行为。
+- **待用户本机完成**：① `git push origin main`（24 个提交）；② 按
+  `docs/RELEASE_NOTES_v1.9.0.md` 发布第一个 GitHub Release 并附上 exe。

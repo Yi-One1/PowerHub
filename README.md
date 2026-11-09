@@ -4,6 +4,11 @@ Windows 桌面端 2.4G 无线外设电量监测工具。常驻托盘，实时显
 罗技 GPW2、漫步者 G3 MAX 的电量与状态；界面为澎湃 OS 4 式**柔光玻璃**（会透出壁纸并跟着变色）；
 设备接入完全配置化，新增型号不需要改代码。
 
+> **当前版本 v1.9.0**（2026-11-10）｜ 单文件产物 `dist/电量中枢_PowerHub_v1.9.0.exe` ｜
+> 自动化测试 `478 passed / 1 skipped`（39 个测试文件 / 479 项）｜
+> 本轮变更与发布说明见 `docs/RELEASE_NOTES_v1.9.0.md`。
+> 下方预览图拍摄于 10-20，v1.9.0 已改头部品牌行、胶囊配色、拖动手柄圆点，界面以实际运行为准。
+
 <p align="center">
   <img src="preview/panel-demo.png" width="700" alt="主面板">
 </p>
@@ -414,7 +419,7 @@ run.bat
 
 ---
 
-## 五、许可证
+## 七、许可证
 
 本项目采用 [MIT License](LICENSE)（Copyright © 2026 毅One），
 可自由使用、修改和分发，需保留版权与许可声明。
@@ -422,7 +427,7 @@ run.bat
 用户配置与日志在 `%APPDATA%\BatteryGlass\`（`preferences.json` / `devices.json` / `app.log`）。
 卸载直接删目录即可，自启动项在设置里关掉或从任务管理器「启动应用」里禁用。
 
-### 测试
+## 八、测试
 
 ```bat
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
@@ -450,11 +455,18 @@ run.bat
 | `test_ui_glass.py` | 柔光玻璃：环境色取样、模糊、空白截屏回落、白纱自适应曲线（含单调性）、边缘融色、顶部受光、悬浮提亮；整屏取样的原点/缩放换算、移动后取样位置变化、抹掉面板自己那块 |
 | `test_tray_centering.py` | 托盘数字按墨迹居中：8 个图标尺寸 × 两位数/三位数/深浅底，偏差 ≤0.75px；复刻旧画法做对照实验证明断言有判别力；离屏字体库为空时显式装载字体 |
 | `test_ui_header_brand.py` | 头部品牌行：文案与版本取自常量（monkeypatch 换常量可证伪硬编码）、切页不丢品牌、三标签与按钮不重叠不截断、墨迹级底边齐平、两颗胶囊的 AA 对比度与「不许再写死灰底」结构守卫 |
+| `test_panel_position.py` | 面板每次打开回主屏右下角、拖走再打开、连续 3 轮、设置页变高四边不出屏、齿轮往返锁下边缘、可见时不位移、底图先于 show、`PANEL_EDGE_MARGIN` 单一来源 |
+| `test_drag_handle_dots.py` | 手柄 6 点墨迹分组：行距 4/4、上下留白 7/7、左右对称；圆度断言（硬边方块必红）与旧算法必红自证 |
+| `test_demo_setting_removed.py` | 设置页无「演示数据」行、旧配置 `demo:true` 加载即忽略且不写回、`--demo` 与琥珀标记仍可用 |
+| `test_footer_chip_dot.py` | 「全部已连接」灰胶囊 + `#12734A` 绿点的像素取证、三态高度一致、点 3:1 / 字 4.5·4.3 对比度、改回浅绿必红 |
+| `test_version_source.py` | AST 扫 `tools/build_exe.py`（排除模块 docstring 举例）不许出现版本字面量；产物名必须由 `APP_VERSION` 拼出 |
+
+共 **39 个测试文件 / 479 项**，`-m pytest` 结果 `478 passed / 1 skipped`。
 
 
 ---
 
-## 七、已知限制
+## 九、已知限制
 
 1. **私有协议无文档**：迈从、漫步者的 dongle 走厂商自定义报文，必须真机抓包才能定位电量字节；
    本项目提供工具与配置位，但不猜测协议（乱写 Feature 报文有改坏设备配置的风险）。
@@ -487,7 +499,7 @@ run.bat
 
 ---
 
-## 八、还可以往哪走
+## 十、还可以往哪走
 
 - 给未支持设备加一个"校准向导"：面板内引导抓包 → 自动生成 `parse` 配置。
 - 电量历史落盘（SQLite），面板里画 7 天曲线，顺便估算剩余可用时长。

@@ -10,7 +10,17 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..core import autostart, presence
@@ -43,6 +53,12 @@ BADGE_INSET = 0.5
 BADGE_RADIUS = 4.6
 PERCENT_FONT = 10.6          # 两位数：再大两侧就贴到圆角块边缘，看着挤
 PERCENT_FONT_COMPACT = 8.4   # 三位数（100）收字号，否则会顶到徽标边缘
+# 墨迹外框量不到时用来估算数字高度的比例，按「数字墨迹高 / ascent」标定
+# （实测 0.67~0.72，随字体/字重浮动，取偏保守的 0.72）。
+# 注意：数字墨迹比字体 capHeight 还要高一截（cap/ascent 只有约 0.65），
+# 所以这里不能拿帽高顶替。该常量只服务于「轮廓与度量双双失败」这条不可达兜底分支
+# （详见 _ink_box 的说明）。
+DIGIT_CAP_RATIO = 0.72
 CHARGE_DOT_RADIUS = 2.4
 # 「读不到电量 + 充电」时正中那枚闪电的边长（16px 画布下的取值）
 CHARGE_BOLT_SIZE = 9.6
@@ -82,6 +98,52 @@ def _badge_rect(scale: float) -> QRectF:
     """数字模式的圆角徽标：几乎占满整个画布。"""
     side = 16.0 - 2 * BADGE_INSET
     return QRectF(BADGE_INSET * scale, BADGE_INSET * scale, side * scale, side * scale)
+
+
+def _ink_box(font: QFont, text: str) -> QRectF:
+    """字形**真实墨迹外框**（相对基线左端，向上为负），用于按墨迹居中。
+
+    首选把文字转成轮廓路径再取包围盒：这是矢量笔画的真实边界，带亚像素精度，
+    既不含左右侧边距（side bearing），也不含基线以下的空白。
+    `QFontMetricsF.tightBoundingRect()` 是同一件事的度量接口，但它返回的是
+    **整数对齐**的包围框（会向外量化到相邻像素，宽高各多出约一个像素），
+    按它对齐会重新引入最多半像素的偏差 —— 所以只用它兜底。
+    兜底的兜底：连度量都量不出东西时，用「advance 宽度 + 数字墨迹高」自己拼一个 ——
+    阿拉伯数字没有下伸部，墨迹底边就是基线，顶边在基线上方约 0.7 倍升部处。
+    """
+    if text:
+        path = QPainterPath()
+        path.addText(QPointF(0.0, 0.0), font, text)
+        box = path.boundingRect()
+        if box.width() > 0.01 and box.height() > 0.01:
+            return box
+    metrics = QFontMetricsF(font)
+    ink = metrics.tightBoundingRect(text)
+    if ink.width() > 0.01 and ink.height() > 0.01:
+        return ink
+    cap_height = metrics.capHeight()
+    if cap_height <= 0.01:
+        # 连帽高都量不到（字体库为空的极端环境）：按「数字墨迹高 ≈ 0.72 倍升部」估算。
+        # 宁可略偏也不抛异常 —— 但这条分支在装了中文字体的 Windows 上走不到。
+        cap_height = metrics.ascent() * DIGIT_CAP_RATIO
+    return QRectF(0.0, -cap_height, metrics.horizontalAdvance(text), cap_height)
+
+
+def _ink_centered_origin(font: QFont, text: str, center: QPointF) -> QPointF:
+    """算出「墨迹外框中心落在 center 上」时该用的绘制起点（基线左端）。
+
+    用 `drawText(rect, AlignCenter)` 做不到视觉居中：它按 ascent + descent 的整块
+    行高排版，数字没有下伸部，基线以下那段空白把字形整体压低了约 0.06em
+    （实测偏低 16px 约 1px、32px 约 1.5px、64px 约 2px，具体数值随像素测量口径
+    有半像素差）；
+    水平方向按 advance 宽度居中，左右 side bearing 不对称也会带偏零点几像素。
+    这里改成直接对齐墨迹外框，与字体、字号、文字内容都无关。
+    """
+    ink = _ink_box(font, text)
+    return QPointF(
+        center.x() - ink.center().x(),
+        center.y() - ink.center().y(),
+    )
 
 
 def _draw_charge_dot(painter: QPainter, scale: float) -> None:
@@ -149,8 +211,11 @@ def _draw_icon(painter: QPainter, size: int, level: Optional[int], color: str, c
         painter.setPen(foreground_on(base))
         text = str(min(100, int(level)))
         font_size = PERCENT_FONT if len(text) < 3 else PERCENT_FONT_COMPACT
-        painter.setFont(theme.font(font_size * scale, 700))
-        painter.drawText(badge, int(Qt.AlignmentFlag.AlignCenter), text)
+        percent_font = theme.font(font_size * scale, 700)
+        painter.setFont(percent_font)
+        # 按墨迹外框居中（含竖直与水平），见 _ink_centered_origin 的说明。
+        # 位置只跟徽标中心有关：充电时只是在右下角加个绿点角标，数字纹丝不动。
+        painter.drawText(_ink_centered_origin(percent_font, text, badge.center()), text)
         if charging:
             _draw_charge_dot(painter, scale)
         return

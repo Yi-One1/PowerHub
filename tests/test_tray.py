@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
@@ -375,14 +375,20 @@ def test_tray_all_hidden_falls_back_to_placeholder(qapp, tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 # 图标排版：数字更大更满，充电不挤数字
 # --------------------------------------------------------------------------- #
-def _capture_text_rects(monkeypatch) -> list:
-    """记录 drawText 的 (矩形, 字号, 文本)，用来验证数字没被压缩/移位。"""
+def _capture_text_calls(monkeypatch) -> list:
+    """记录 drawText 的 (绘制起点/矩形, 字体, 文本)，用来验证数字的排版。
+
+    数字现在按墨迹外框居中，用的是 `drawText(QPointF, str)` 重载；
+    兼容旧的 `drawText(QRectF, flags, str)`，避免测试与实现细节绑死。
+    """
     captured: list = []
     original = QPainter.drawText
 
     def fake_drawText(painter, *args):
         if len(args) == 3 and isinstance(args[2], str):
-            captured.append((args[0], painter.font().pixelSize(), args[2]))
+            captured.append((args[0], painter.font(), args[2]))
+        elif len(args) == 2 and isinstance(args[1], str):
+            captured.append((args[0], painter.font(), args[1]))
         return original(painter, *args)
 
     monkeypatch.setattr(QPainter, "drawText", fake_drawText)
@@ -390,42 +396,40 @@ def _capture_text_rects(monkeypatch) -> list:
 
 
 def test_digits_fill_the_badge(monkeypatch):
-    """数字矩形就是整块徽标，旧版四周留白被吃掉。"""
-    from app.ui.tray import BADGE_INSET
-
-    rects = _capture_text_rects(monkeypatch)
+    """数字字号显著大于旧版 9.4（旧版四周留白大，缩到任务栏里糊成一团）。"""
+    calls = _capture_text_calls(monkeypatch)
     _paint_icon((88, "#0A84FF", False, True, False))
-    assert rects
-    rect, font_size, text = rects[-1]
+    assert calls
+    origin, font, text = calls[-1]
     assert text == "88"
-    assert rect.topLeft().x() == pytest.approx(BADGE_INSET * 2, abs=0.01)      # 32px 画布 → scale 2
-    assert rect.width() == pytest.approx((16 - 2 * BADGE_INSET) * 2, abs=0.01)
-    assert font_size > 20, "16px 下字号应显著大于旧版 9.4"
+    assert font.pixelSize() > 20, "16px 下字号应显著大于旧版 9.4"
+    # 改用基线起点绘制（墨迹居中），不再是「矩形 + 对齐标志」
+    assert isinstance(origin, QPointF), f"数字应使用基线起点绘制，实际是 {type(origin).__name__}"
 
 
 def test_charging_does_not_shrink_or_shift_digits(monkeypatch):
     """充电时数字仍占满徽标、字号不变 —— 旧版会缩小并上移。"""
-    rects = _capture_text_rects(monkeypatch)
+    calls = _capture_text_calls(monkeypatch)
     _paint_icon((88, "#0A84FF", True, True, False))
-    charging_rect, charging_font, _ = rects[-1]
-    rects.clear()
+    charging_origin, charging_font, _ = calls[-1]
+    calls.clear()
     _paint_icon((88, "#0A84FF", False, True, False))
-    idle_rect, idle_font, _ = rects[-1]
+    idle_origin, idle_font, _ = calls[-1]
 
-    assert charging_font == idle_font
-    assert charging_rect == idle_rect
+    assert charging_font.pixelSize() == idle_font.pixelSize()
+    assert charging_origin == idle_origin
 
 
 def test_three_digit_level_uses_compact_font(monkeypatch):
-    rects = _capture_text_rects(monkeypatch)
+    calls = _capture_text_calls(monkeypatch)
     _paint_icon((100, "#0A84FF", False, True, False))
-    big_text = rects[-1]
-    rects.clear()
+    big_text = calls[-1]
+    calls.clear()
     _paint_icon((88, "#0A84FF", False, True, False))
-    small_text = rects[-1]
+    small_text = calls[-1]
 
     assert big_text[2] == "100"
-    assert big_text[1] < small_text[1], "三位数要收字号，否则会溢出徽标"
+    assert big_text[1].pixelSize() < small_text[1].pixelSize(), "三位数要收字号，否则会溢出徽标"
 
 
 def test_charging_dot_sits_in_bottom_right_corner(qapp):

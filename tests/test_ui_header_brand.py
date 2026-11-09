@@ -498,7 +498,8 @@ def test_footer_chip_states_all_share_one_style_helper(panel):
     assert panel_module.CHIP_TEXT in panel.chip.styleSheet()
     assert "border-radius: 9px" in panel.chip.styleSheet(), "形状参数必须来自 chip_style()"
 
-    # 全部读到 → 绿色「全部已连接」：颜色是语义色，但形状仍来自同一个函数
+    # 全部读到 → 「全部已连接」：G4 起改成灰底 + 绿点（点色见 panel.CHIP_OK_DOT），
+    # 于是这一态的文字色也回到了共用深灰，形状仍来自同一个函数
     full = {
         device_id: Snapshot(device_id=device_id, level=55, online=True, last_seen=now, updated_at=now)
         for device_id in devices
@@ -506,10 +507,11 @@ def test_footer_chip_states_all_share_one_style_helper(panel):
     panel._update_footer(full)
     from app.ui import theme
 
-    assert theme.OK in panel.chip.styleSheet()
+    assert panel_module.CHIP_TEXT in panel.chip.styleSheet(), "「全部已连接」应回到共用深灰（G4）"
+    assert theme.OK not in panel.chip.styleSheet(), "不该再有浅绿字/浅绿底（G4 已换成灰底绿点）"
     assert "border-radius: 9px" in panel.chip.styleSheet()
 
-    # 演示数据（G4 会删掉这个开关，先一起守住）：琥珀色 + 同样的形状
+    # 演示数据（面板里那颗琥珀标记仍然保留，只删了设置页的开关）：琥珀色 + 同样的形状
     panel.store.prefs.demo = True
     try:
         panel._update_footer(full)

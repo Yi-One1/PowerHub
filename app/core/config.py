@@ -554,6 +554,12 @@ class Preferences:
         prefs.offline_hide_seconds = max(
             MIN_OFFLINE_HIDE_SECONDS, min(MAX_OFFLINE_HIDE_SECONDS, prefs.offline_hide_seconds)
         )
+        # 演示数据（demo）从偏好里**一律不认**：字段留着（--demo、tools/screenshot.py、
+        # Monitor(demo=True) 与测试仍然用它），但设置页已经没有这个开关，用户层
+        # preferences.json 里历史残留的 "demo": true 不该让正式启动进演示模式 ——
+        # 否则一次误开就永远显示假电量，且界面上再也关不掉。
+        # 想进演示模式只能显式走命令行：main.py --demo / tools/screenshot.py。
+        prefs.demo = False
         prefs.sanitize_types(registry)
         prefs.sanitize_devices()
         return prefs

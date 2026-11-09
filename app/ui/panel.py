@@ -7,7 +7,7 @@ import time
 from typing import Optional
 
 from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QPainter
+from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -110,6 +110,19 @@ CHIP_TEXT = "#4A4A4F"
 CHIP_FILL = (120, 120, 128)      # 中性灰底；透明度单独给
 CHIP_FILL_ALPHA = 0.10
 
+# 「全部已连接」的状态圆点。为什么不用 theme.OK（#2FC48A）：
+# 那是给进度环/条形这类**大面积图形**调的亮绿，压在浅灰胶囊底（叠面后 #D7D7D8）上
+# 对比度只有 1.56:1、最暗角 1.26:1 —— 连 WCAG 1.4.11 对图形元素要求的 3:1 都到不了，
+# 于是"绿底绿字"的旧胶囊（1.59 / 1.29）等于什么都看不见。
+# 取同色相压深两档的 #12734A：vs 灰底 226 面 4.08、202 面 3.30，两档都过 3:1。
+# 就地写色值、不加 theme token（只有这一处用；theme.OK 仍是环/条的主色，不动它）。
+CHIP_OK_DOT = "#12734A"
+# 圆点自己画（不用富文本的「●」字符）：富文本会把 QLabel 的 sizeHint 抬高 2px，
+# 胶囊跟着变高；自绘在像素上可控，也不依赖字体里有没有这个字形。
+CHIP_DOT_SIZE = 6       # 圆点直径
+CHIP_DOT_LEFT = 9       # 圆点左边缘（与 QSS 的左右 9px 内边距对齐）
+CHIP_DOT_INDENT = 21    # 有圆点时文字让开的左侧内边距（圆点 + 呼吸位）
+
 
 def _chip_background() -> str:
     """胶囊默认底色（中性灰 + 低透明度）。"""
@@ -117,12 +130,51 @@ def _chip_background() -> str:
     return f"rgba({red},{green},{blue},{CHIP_FILL_ALPHA:g})"
 
 
-def chip_style(color: str = CHIP_TEXT, background: str | None = None) -> str:
-    """页脚状态胶囊的 QSS（圆角 9px、左右 9px / 上下 3px）。
+def chip_style(color: str = CHIP_TEXT, background: str | None = None, padding_left: int = 9) -> str:
+    """页脚状态胶囊的 QSS（圆角 9px、上下 3px / 左右 9px）。
 
-    默认走共用灰；演示数据（琥珀）与"全部已连接"（绿）只换颜色，形状参数仍然只有这一份。
+    默认走共用灰。演示数据（琥珀）只换颜色，形状参数仍然只有这一份；
+    「全部已连接」不再换色 —— 它是灰底 + 一个 `CHIP_OK_DOT` 绿点（见该常量的注释），
+    绿点靠 `padding_left` 在左侧让出位置，文字整体右移。
     """
-    return f"color: {color}; background: {background or _chip_background()}; border-radius: 9px; padding: 3px 9px;"
+    return (
+        f"color: {color}; background: {background or _chip_background()};"
+        f"border-radius: 9px; padding: 3px 9px 3px {padding_left}px;"
+    )
+
+
+class _StatusChip(QLabel):
+    """页脚状态胶囊：圆角灰底 + 可选的左侧状态圆点。
+
+    圆点自己画，不用富文本「●」也不用子控件：
+    · 富文本会把 QLabel 的 sizeHint 抬高 2px（胶囊跟着变高，用户能看出来）；
+    · 子控件要手动跟 resize 同步位置；
+    · 自绘只需要一个颜色字段，且在像素上完全可控、不依赖字体有没有这个字形。
+    """
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None) -> None:
+        super().__init__(text, parent)
+        self._dot_color: Optional[str] = None
+
+    def set_dot(self, color: Optional[str]) -> None:
+        """设置或清除左侧圆点（只影响绘制，不改变控件尺寸）。"""
+        self._dot_color = color
+        self.update()
+
+    def dot_color(self) -> Optional[str]:
+        return self._dot_color
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if not self._dot_color:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self._dot_color))
+        top = (self.height() - CHIP_DOT_SIZE) // 2
+        painter.drawEllipse(CHIP_DOT_LEFT, top, CHIP_DOT_SIZE, CHIP_DOT_SIZE)
+        painter.end()
 
 
 def version_chip_style(color: str = CHIP_TEXT) -> str:
@@ -344,7 +396,7 @@ class Panel(QWidget):
         layout.addWidget(self.footer_text)
         layout.addStretch(1)
 
-        self.chip = QLabel("", footer)
+        self.chip = _StatusChip("", footer)
         self.chip.setFont(theme.font(10, 600))
         self.chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.chip.setStyleSheet(chip_style())
@@ -772,6 +824,7 @@ class Panel(QWidget):
             self.chip.setText("演示数据")
             # 琥珀色是"演示数据"的专属语义色，只换颜色，形状/字号仍走共用函数
             self.chip.setStyleSheet(chip_style(theme.WARN_TEXT, "rgba(255,159,10,0.18)"))
+            self.chip.set_dot(None)
             self.chip.show()
             return
 
@@ -781,13 +834,19 @@ class Panel(QWidget):
         if total and read < total:
             self.chip.setText(f"{total - read} 台暂无电量")
             self.chip.setStyleSheet(chip_style())
+            self.chip.set_dot(None)
             self.chip.show()
             self.chip.setToolTip("把鼠标停在对应卡片上可以看到诊断信息")
         elif total:
+            # 灰底 + 绿点：文字回到共用的深灰（浅绿字压浅绿底实测只有 1.59:1），
+            # "已连接"这层语义交给左边那个 #12734A 的圆点（4.08 / 3.30，过图形 3:1）。
+            # padding_left 为圆点让位，文字不压在点上，胶囊高度不变。
             self.chip.setText("全部已连接")
-            self.chip.setStyleSheet(chip_style(theme.OK, "rgba(47,196,138,0.14)"))
+            self.chip.setStyleSheet(chip_style(padding_left=CHIP_DOT_INDENT))
+            self.chip.set_dot(CHIP_OK_DOT)
             self.chip.show()
         else:
+            self.chip.set_dot(None)
             self.chip.hide()
 
     def _maybe_notify(self, snapshots: dict[str, Snapshot]) -> None:

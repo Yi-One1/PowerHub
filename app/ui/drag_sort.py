@@ -10,13 +10,29 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, Optional
 
-from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
 from . import theme
 
 HANDLE_SIZE = (14, 24)
+
+# 6 个圆点：**圆心取整数**、直径取浮点，交给抗锯齿把边磨圆。
+# 旧实现是 step=4.2、cy = h/2 - step，圆心理论值 7.8 / 12 / 16.2，再各被 int() 截一刀
+# → 7.5 / 12 / 16，上/下行距变成 4.5 / 4.0 —— 这就是用户报的"上面的点和中间的点更疏"。
+# 现在的做法：
+#   · 圆心由控件中心**反推**，对称性是构造出来的、不靠取整：
+#       xs = (w//2 - DOT_SPREAD_X, w//2 + DOT_SPREAD_X) → 4 / 10（4 + 10 = 14 = w）
+#       ys = (h//2 - DOT_STEP_Y, h//2, h//2 + DOT_STEP_Y) → 8 / 12 / 16（8 + 16 = 24 = h）
+#   · 直径取浮点 2.8，并且以**圆心**为中心画 QRectF：若按整数左上角画，
+#     墨迹会变成 7..9 / 11..13 / 15..17，上下差 1px、对称直接破；
+#   · 直径别取 3.0：抗锯齿边缘会把三行墨迹连成一片，等距断言会误红（2.4~2.8 才安全）。
+#   · 直径也别退回整数 2：2px 硬边画出来是"小方块"，而用户说的是"6 个点"。
+# ⚠️ 版面只允许 `DragHandle.dot_centres()` 一处计算，`paintEvent` 直接遍历它。
+DOT_SIZE = 2.8
+DOT_STEP_Y = 4
+DOT_SPREAD_X = 3
 
 
 class DragHandle(QWidget):
@@ -30,24 +46,30 @@ class DragHandle(QWidget):
         self._row = row
         self._controller = controller
 
+    def dot_centres(self) -> list[tuple[int, int]]:
+        """6 个圆点的圆心（控件坐标，整数）——**版面布局的唯一来源**。
+
+        `paintEvent` 和测试都从这里取。以前绘制里又重算了一遍 block/嵌套居中，
+        两处常数一致时看着没事，但只改这里就会"测试绿、界面错"，所以合并成一处。
+        """
+        cx, cy = self.width() // 2, self.height() // 2
+        xs = (cx - DOT_SPREAD_X, cx + DOT_SPREAD_X)
+        ys = (cy - DOT_STEP_Y, cy, cy + DOT_STEP_Y)
+        return [(x, y) for y in ys for x in xs]
+
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(theme.TEXT_SECONDARY))
         painter.setOpacity(0.75)
-        dot = 2.0
-        step = 4.2
-        cx = self.width() / 2
-        cy = self.height() / 2 - step
-        for row in range(3):
-            for col in (-1, 1):
-                painter.drawEllipse(
-                    int(cx + col * step - dot / 2),
-                    int(cy + row * step - dot / 2),
-                    int(dot) + 1,
-                    int(dot) + 1,
-                )
+        radius = DOT_SIZE / 2.0
+        # 只遍历 dot_centres()，不在绘制里另算一遍布局
+        for centre_x, centre_y in self.dot_centres():
+            painter.drawEllipse(
+                QRectF(centre_x - radius, centre_y - radius, DOT_SIZE, DOT_SIZE)
+            )
+        painter.end()
 
     # -- 拖动 ---------------------------------------------------------------
     def mousePressEvent(self, event) -> None:  # noqa: N802

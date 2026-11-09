@@ -350,11 +350,9 @@ class SettingsPane(QWidget):
         self.minimized_toggle.toggled.connect(self._on_start_minimized)
         column.addWidget(SettingRow("启动后直接进托盘", "不弹出面板，保持后台静默", self.minimized_toggle))
 
-        self.demo_toggle = ToggleSwitch()
-        self.demo_toggle.setChecked(store.prefs.demo)
-        self.demo_toggle.toggled.connect(self._on_demo)
-        column.addWidget(SettingRow("演示数据", "用模拟电量预览效果，界面上会有「演示」标记", self.demo_toggle))
-
+        # 「演示数据」开关已移除：它是开发/预览用的能力，正式使用没有意义，
+        # 用户误开后界面上会一直是假电量。演示能力本身保留 —— 走 `main.py --demo`
+        # 或 tools/screenshot.py，页脚的「演示数据」标记仍在（诚实标注数据是假的）。
         column.addStretch(1)
         self._building = False
 
@@ -709,10 +707,6 @@ class SettingsPane(QWidget):
 
     def _on_start_minimized(self, checked: bool) -> None:
         self.store.prefs.start_minimized = checked
-        self._commit()
-
-    def _on_demo(self, checked: bool) -> None:
-        self.store.prefs.demo = checked
         self._commit()
 
     # -- 保存 ---------------------------------------------------------------

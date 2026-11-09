@@ -1,6 +1,7 @@
 # 项目进展（progress）
 
-> 更新：2026-11-10　版本：**v1.9.0**（`dist/电量中枢_PowerHub_v1.9.0.exe`）　状态：本地有未推送提交（本机沙箱推 GitHub 失败：`schannel: server closed abruptly`，需用户本机 `git push origin main`；运行 `git log origin/main..HEAD` 查看确切数量）
+> 更新：2026-11-10　版本：**v1.9.0**（`dist/电量中枢_PowerHub_v1.9.0.exe`）　状态：**已推送 GitHub**，
+> 本地与 `origin/main` 同步（顶端 `3be3f66`）；发布 Release 由用户手动完成（见 `docs/RELEASE_NOTES_v1.9.0.md`）
 
 ## 已完成
 
@@ -109,10 +110,14 @@ v1.7.0~v1.8.4 七个旧产物的文件名与字节数逐个不变（只多这一
 
 ## 未完成待办
 
-- [ ] **推送 GitHub**：本地 **24 个**未推送提交。2026-11-10 在沙箱共试过 3 次，均失败：
-      `schannel: server closed abruptly (missing close_notify)`（1 次）、
-      `CONNECT tunnel failed, response 502`（常规推送与 `-c http.version=HTTP/1.1 -c http.sslBackend=openssl` 各 1 次）。
-      远端地址正确：`https://github.com/Yi-One1/PowerHub.git`。属沙箱代理问题，请按下方「手动推送教程」在本机执行。
+- [x] **推送 GitHub**：已完成（2026-11-10），`main` 顶端为 `3be3f66`。
+      过程：沙箱内前 3 次推送失败（schannel / 502 ×2）；用户本机首推被 `rejected (fetch first)`
+      —— 远端多出 1 个本地没有的提交 `5041b9a Update LICENSE`（只把版权人字样
+      「毅One」改成「Yi One」）。`git fetch origin main` 后确认分叉点 `b71c0bf` 之后
+      **本地完全没有动过 LICENSE**，合并无冲突；于是用
+      `git pull --no-rebase --no-edit origin main` 生成合并提交 `3be3f66`（**不用 rebase**，
+      否则本文件里按哈希记录的 25 个提交会全部改写），再 `git push origin main` 成功：
+      `5041b9a..3be3f66 main -> main`。GitHub commits 页面已核对，本地与远端 0/0。
 - [x] **部署新版本**：用户已明确「**不需要部署到桌面，只打包到 `dist/`**」—— 不再复制到 `D:\桌面\APP\`，也不再需要「关一次再开一次自启」的迁移动作
 - [ ] （可选）`dist/` 下的历史产物要不要清理，交由使用者决定
 
@@ -139,7 +144,10 @@ v1.7.0~v1.8.4 七个旧产物的文件名与字节数逐个不变（只多这一
   `app/ui/tray.py`（托盘图标绘制与槽位管理）、`app/ui/settings.py`（设置页）、`app/core/autostart.py`（自启 + 旧值迁移）
 - 长期记忆：`.workbuddy/memory/MEMORY.md`；历史日志：`.workbuddy/memory/2026-1*.md`
 
-## 手动推送 GitHub 教程（沙箱代理不通时用）
+## 推送故障排查记录（本轮已解决，留作以后参考）
+
+> 2026-11-10 的 `rejected (fetch first)` 已按下面第 3 步解决：**先 fetch 看差异，再用 merge 而非 rebase**
+> （本项目 `progress.md` 按提交哈希记录进展，rebase 会改写 25 个哈希、让文档全部对不上）。
 
 在本机（不经沙箱代理）打开 **Git Bash / PowerShell / CMD**，逐条执行：
 
@@ -180,6 +188,7 @@ git push origin main
 - 用户已对 5 组改动给出**总验收通过**。
 - **发布**：本次发布版本定为 **v1.9.0**（查证过 GitHub 上本仓库 0 个 Release，不撞车）。
   Release 标题、正文、SHA-256、操作步骤都写在 `docs/RELEASE_NOTES_v1.9.0.md`，由用户手动发布。
+- **推送**：已完成，见上方「未完成待办」的推送条目；本轮用的是 merge（保留哈希）而非 rebase。
 - **文档整理**：README 修掉重复的章节编号（原有两个「五」、两个「七」→ 顺排为七/八/九/十），
   测试文件表补上本轮新增的 5 个文件与「39 文件 / 479 项」总数，抬头加当前版本与产物信息，
   并注明 `preview/` 截图仍为 10-20 旧版；progress 补推送实况、手动教程与本节。
@@ -188,5 +197,8 @@ git push origin main
   仍在，其余 5 项已被自动清理；删除后逐项核对均不存在，`git status` 干净。
   **明确保留**：`dist/` 八个 exe、`preview/` 12 张截图、`.venv/`、`.workbuddy/` 与全部源码。
   注：`.pytest-tmp/` 会在下次跑 pytest 时自动重建，属正常行为。
-- **待用户本机完成**：① `git push origin main`（24 个提交）；② 按
-  `docs/RELEASE_NOTES_v1.9.0.md` 发布第一个 GitHub Release 并附上 exe。
+- **待用户手动完成**：按 `docs/RELEASE_NOTES_v1.9.0.md` 发布第一个 GitHub Release 并附上 exe。
+  （代码推送已完成，不需要再做。）
+- **待确认（远端带入）**：`5041b9a Update LICENSE` 把版权人字样改成「Yi One」，
+  而 `README.md` 的许可证段落仍写「毅One」。这是用户在 GitHub 网页上做的修改，
+  本次合并原样接受；两处是否统一、统一成哪个名字，由使用者决定。
